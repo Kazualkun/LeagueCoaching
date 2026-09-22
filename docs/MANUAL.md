@@ -1,7 +1,11 @@
 # RiftCoach AI — Manual de Uso
 
-> Guia completo: instalação, configuração, uso e as ferramentas de marcação durante o replay.
+> Guia completo: instalação, configuração, uso e a tela de revisão.
 > Para a arquitetura técnica, veja [ARCHITECTURE.md](ARCHITECTURE.md).
+>
+> **Este manual descreve o que existe hoje.** O que está planejado e ainda não funciona aparece
+> marcado como tal (seção 6.3) — manual que promete função inexistente faz perder mais tempo
+> que manual nenhum.
 
 ---
 
@@ -378,60 +382,75 @@ e mesmo lá ficam marcadas como **T3**.
 
 ---
 
-## 6. Ferramentas de marcação durante o replay
+## 6. A tela de revisão
 
-### Layout da tela
+> **O que está nesta seção existe e funciona hoje.** O que ainda não existe está na seção 6.3,
+> separado de propósito — manual que descreve função inexistente faz perder mais tempo que manual
+> nenhum.
+
+### 6.1 O que abrir
+
+```bash
+uv run riftcoach web "SeuNome#TAG"
+```
+
+Ele analisa a partida, sobe um servidor local e **abre seu navegador sozinho** em
+`http://127.0.0.1:8770`. Nada é publicado na internet — o servidor só escuta em `127.0.0.1`, ou seja,
+só a sua máquina alcança.
+
+| Flag | Para quê |
+|---|---|
+| `-m BR1_123456` | uma partida específica |
+| `-l 3` | a 3ª partida mais recente |
+| `--no-open` | não abrir o navegador (útil em servidor) |
+| `-p 8771` | outra porta |
+
+### 6.2 O que aparece na tela
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  RiftCoach · Garen TOP · BR1_3239179616 · patch 16.9 · DERROTA           │
+│  RiftCoach · Pyke SUP · BR1_3285629030 · patch 16.18 · VITÓRIA           │
+│  relatório determinístico (nenhum modelo de IA foi usado)                │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  CURVA DE VANTAGEM                                          50%▁▄▆█▆▄▂▁  │
-│  ━━━━━━━━━●━━━━━━━━━━━◆━━━━━━━━━━━━━●━━━━━━━━━━◆━━━━━━━━━━━━━━━━━━━━━━   │
-│   0:00    7:24       18:15         25:21      32:03            35:16     │
-│           ● erro    ◆ crítico    ▲ sua marcação                          │
-├───────────────────────────────────────┬──────────────────────────────────┤
-│  MARCAÇÕES                            │  DETALHE                         │
-│                                       │                                  │
-│  ◆ 18:15  CRÍTICO   −11.1pp   [IA]    │  Morreu na jungle superior       │
-│  ◆ 18:47  CRÍTICO   −12.2pp   [IA]    │  própria, com Arauto a 32s       │
-│  ● 25:21  erro      −8.0pp    [IA]    │                                  │
-│  ▲ 26:40  anotação            [você]  │  Evidências:                     │
-│  ● 32:03  erro      −5.2pp    [IA]    │   • morte D4  (T1, medido)       │
-│                                       │   • nenhuma ward sua nos 60s (T1)│
-│  [+ Marcar momento atual]             │   • wave empurrando (T2)         │
-│  [⚑ Marcar como erro meu]             │                                  │
-│  [? Tenho uma dúvida aqui]            │  ▶ Assistir  (pula p/ 18:07)     │
-├───────────────────────────────────────┴──────────────────────────────────┤
-│  ⏮  ⏪  ▶  ⏩  ⏭     18:15 / 35:16     velocidade 1x     [↻ Repetir]      │
+│  CURVA DE VANTAGEM — probabilidade de vitória por minuto                  │
+│      56% ▆▆▅▅▄▄▅▆▆▇▇█                                                    │
+│      0                    12                     24 min                   │
+├──────────────────────────────────────────────────────────────────────────┤
+│  #1  gravidade 4  ·  15:40  ·  macro                                     │
+│      Você morreu em 15:40 com RIFTHERALD_EM_34s — e isso aconteceu 3x    │
+│      [T1, medido]    morte D4 em ENEMY_JUNGLE_TOPSIDE                    │
+│      [T2, derivado]  estado de wave: NOT_IN_LANE                         │
+│                      premissa: a API não tem campo de wave               │
+│      Correção: ...      Treino: ...            [ ▶ Pular para 15:32 ]    │
+├──────────────────────────────────────────────────────────────────────────┤
+│  #2  gravidade 3  ·  13:17  ·  objetivos          [ ▶ Pular para 13:09 ] │
+│  #3  gravidade 3  ·  13:59  ·  decisão            [ ▶ Pular para 13:51 ] │
+├──────────────────────────────────────────────────────────────────────────┤
+│  BENCHMARKS — UTILITY DIAMOND                                            │
+│    visão por minuto  2.9   p91   [modelo embarcado (não calibrado)]      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### As ferramentas
+**O botão `▶ Pular`** é o coração do modo replay. Com um replay aberto no client, clicar nele faz o
+League navegar até o momento — **8 segundos antes**, porque o erro é a decisão, não a consequência.
 
-| Ferramenta | Atalho | O que faz |
-|---|---|---|
-| **Marcar momento** | `M` | Cria uma marcação no tempo atual do replay |
-| **Marcar erro meu** | `E` | Marca como erro percebido por você |
-| **Dúvida** | `?` | Marca um ponto para perguntar depois |
-| **Marcar acerto** | `B` | Marca algo que você fez bem (serve para comparar) |
-| **Anotar** | `N` | Escreve texto livre na marcação selecionada |
-| **Próximo erro** | `→` | Pula para a próxima marcação da IA |
-| **Repetir trecho** | `R` | Volta 8s e reproduz de novo |
-| **Perguntar à IA** | `P` | Pergunta sobre o momento atual |
+Sem replay aberto, o botão responde explicando o que falta. Não trava nem dá erro genérico.
 
-### Por que as marcações da IA e as suas ficam juntas
+### 6.3 O que ainda NÃO existe
 
-De propósito. O valor da revisão está em **comparar as duas**:
+Foi projetado, os modelos de dados estão no código (`Mark`, `ReviewSession`), mas **a interface não
+foi construída**:
 
-- Onde a **IA marcou crítico e você não percebeu nada** → ponto cego. É o mais valioso
-- Onde **você sentiu que errou e a métrica não viu** → normalmente é erro de execução (trade, combo)
-  que a telemetria não alcança, ou uma percepção equivocada. Os dois casos ensinam
+| Planejado | Estado |
+|---|---|
+| Você marcar seus próprios momentos | ☐ sem UI |
+| Escrever anotações num momento | ☐ sem UI |
+| Retomar a revisão de onde parou | ☐ sem persistência |
+| Atalhos de teclado (`M`, `E`, `?`, `B`) | ☐ não implementados |
+| Perguntar à IA sobre um momento | ☐ depende da camada de IA |
 
-### Retomar depois
-
-Tudo é salvo automaticamente por partida. Ao reabrir, suas marcações, anotações e **a posição onde
-você parou** voltam. Você pode revisar uma partida em várias sessões.
+Hoje a linha do tempo tem **só as marcações da IA** — que são os próprios findings, cada um com
+gravidade medida e alvo de replay.
 
 ---
 
