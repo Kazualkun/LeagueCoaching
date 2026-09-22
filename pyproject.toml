@@ -58,7 +58,19 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12 aqui, embora `requires-python` seja >=3.11 e o CI teste 3.11 de verdade.
+#
+# Motivo: o PIL traz tipos inline e importa numpy, cujos stubs usam a sintaxe
+# `type` de 3.12+. Com o alvo em 3.11 o mypy falha ao PARSEAR esse stub e para
+# antes de checar qualquer coisa nossa — erro de sintaxe em dependencia nao se
+# suprime com override, e `follow_imports = skip` derruba junto a checagem do
+# pydantic (30 erros falsos).
+#
+# O que se perde: o mypy deixa de apontar sintaxe exclusiva de 3.12 no NOSSO
+# codigo. Isso ja e coberto, e melhor: o job de 3.11 do CI roda a suite inteira,
+# e qualquer sintaxe nova demais falha no import. Checagem em tempo de execucao
+# na versao real vale mais que a estatica numa versao simulada.
+python_version = "3.12"
 strict = true
 # O parser e o contrato de dados sao onde moram os bugs silenciosos de correcao.
 # analysis/ e benchmarks.py entraram junto com a etapa 2: eles produzem o
@@ -85,17 +97,15 @@ files = [
 module = ["zstandard.*", "aiosqlite.*", "keyring.*", "pyarrow.*", "uvicorn.*"]
 ignore_missing_imports = true
 
-# av e rapidocr nao publicam stubs; PIL publica, mas o do numpy usa a sintaxe
-# `type` de 3.12+ e quebra a checagem inteira contra o alvo 3.11.
+# av e rapidocr nao publicam stubs.
 #
-# Rebaixar `python_version` para 3.12 resolveria e seria o caminho errado: o
-# projeto declara suporte a 3.11, e o alvo do mypy e justamente o que impede
-# alguem de usar sintaxe nova sem perceber. Pular a checagem DENTRO dessas
-# bibliotecas nao afeta a checagem do nosso codigo que as usa.
+# numpy NAO aparece aqui de proposito: os stubs dele usam sintaxe `type` de
+# 3.12+ e derrubavam a checagem inteira contra o alvo 3.11 (que o CI testa de
+# verdade). Em vez de suprimir o erro, `vision/ocr.py` deixou de precisar do
+# numpy — passa PNG em bytes para o RapidOCR, que aceita os dois.
 [[tool.mypy.overrides]]
-module = ["av.*", "rapidocr_onnxruntime.*", "numpy.*", "PIL.*"]
+module = ["av", "av.*", "rapidocr_onnxruntime", "rapidocr_onnxruntime.*"]
 ignore_missing_imports = true
-follow_imports = "skip"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
