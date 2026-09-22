@@ -481,6 +481,17 @@ def distill(
                 taken_by_focus_team=mine,
                 contested=_contested(t_ms, pos),
                 zone=zone,
+                focus_player_distance_u=(
+                    round(
+                        (
+                            (pf["position"]["x"] - pos["x"]) ** 2
+                            + (pf["position"]["y"] - pos["y"]) ** 2
+                        )
+                        ** 0.5
+                    )
+                    if pf and "position" in pf and "x" in pos
+                    else None
+                ),
                 focus_player_zone=(
                     side_relative(
                         to_zone(pf["position"]["x"], pf["position"]["y"]), team_id

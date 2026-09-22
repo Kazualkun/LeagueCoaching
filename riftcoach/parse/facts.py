@@ -111,6 +111,11 @@ class ObjectiveEvent(BaseModel):
     contested: bool  # algum abate de campeao em +/- 25 s
     zone: str
     focus_player_zone: str  # onde o jogador ESTAVA quando isso aconteceu
+    # Distancia do jogador ate o objetivo, em unidades do mapa. E o que
+    # separa 'estava na luta' de 'estava do outro lado do mapa' — a zona
+    # sozinha nao serve, porque NEUTRAL_MID_LANE nao diz se voce estava a
+    # 1.000 ou a 9.000 unidades do pit. None quando a posicao nao foi lida.
+    focus_player_distance_u: int | None = None
     team_gold_diff_at: int
     wards_placed_60s_before: int  # SO contagem — a Riot nao da posicao de ward
 

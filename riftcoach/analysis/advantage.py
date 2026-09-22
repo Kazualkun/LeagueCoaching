@@ -77,6 +77,11 @@ WP_SCALE_PER_MINUTE = 150.0
 # jogador — metade das pessoas nunca veria um.
 SEVERITY_THRESHOLDS = [(1.5, 1), (3.0, 2), (6.0, 3), (11.0, 4), (21.0, 5)]
 
+# Ate esta distancia do objetivo, consideramos que o jogador estava NA luta.
+# 2.500 unidades cobre o pit e a area em volta de onde da para contestar —
+# mais que isso e outra parte do mapa.
+NEAR_OBJECTIVE_UNITS = 2_500
+
 Involvement = Literal["direct", "positional", "team"]
 
 
@@ -281,8 +286,22 @@ def find_blunders(facts: MatchFacts, window_ms: int = 45_000) -> list[Blunder]:
         ):
             continue
         antes, depois = par(o.t_ms)
-        # O jogador estava do lado certo do mapa quando o objetivo caiu?
-        longe = o.focus_player_zone.startswith("OWN_") or "BASE" in o.focus_player_zone
+        # O jogador estava NA luta, ou do outro lado do mapa?
+        #
+        # A versao anterior olhava so o prefixo da zona: "OWN_" ou "BASE"
+        # contava como longe, e qualquer outra coisa como presente. Isso
+        # produziu, num relatorio real, "o time perdeu isto com voce presente"
+        # para um Arauto tomado no pit do Barao enquanto o jogador estava em
+        # NEUTRAL_MID_LANE — que nao e perto de nada.
+        #
+        # Zona nao responde a pergunta: NEUTRAL_MID_LANE nao diz se voce estava
+        # a mil ou a nove mil unidades do pit. Distancia responde, e a
+        # destilacao ja mede. Sem ela (posicao nao lida), a zona volta a ser o
+        # criterio, porque e o unico que sobra.
+        if o.focus_player_distance_u is not None:
+            longe = o.focus_player_distance_u > NEAR_OBJECTIVE_UNITS
+        else:
+            longe = o.focus_player_zone.startswith("OWN_") or "BASE" in o.focus_player_zone
         out.append(
             Blunder(
                 t_ms=o.t_ms,
@@ -293,6 +312,11 @@ def find_blunders(facts: MatchFacts, window_ms: int = 45_000) -> list[Blunder]:
                 detail=(
                     f"{o.kind}{'/' + o.subtype if o.subtype else ''} para o inimigo"
                     f"; voce estava em {o.focus_player_zone}"
+                    + (
+                        f" ({o.focus_player_distance_u}u do objetivo)"
+                        if o.focus_player_distance_u is not None
+                        else ""
+                    )
                     + ("" if o.wards_placed_60s_before else "; nenhuma ward sua nos 60s")
                 ),
             )

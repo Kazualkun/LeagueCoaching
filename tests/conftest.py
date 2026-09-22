@@ -51,6 +51,12 @@ def _sem_client_de_verdade(
     """
     # 1. A conferencia de impressao digital abre socket cru, fora do alcance do
     #    respx. Sem isto, cada teste que chama `open_guard` espera o timeout.
+    #
+    #    CUIDADO: neutralizar isto faz `open_guard` nunca levantar, e ja
+    #    escondeu um bug real — a rota /api/seek chamava `open_guard` FORA do
+    #    try, entao uma recusa virava 500 em vez de 409, e nenhum teste
+    #    percebeu. Quem for testar o caminho de recusa precisa sobrescrever
+    #    este monkeypatch, como faz `test_open_guard_failure_is_409`.
     monkeypatch.setattr(
         "riftcoach.replay.guard.assert_pinned_certificate",
         lambda: "0" * 64,

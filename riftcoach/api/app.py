@@ -199,7 +199,20 @@ def create_app() -> Any:
             raise HTTPException(status_code=404, detail=f"finding {index} nao existe")
 
         finding = ranqueados[index]
-        client, guard = await open_guard()
+
+        # `open_guard` FICA DENTRO do try, e isso ja foi bug uma vez.
+        #
+        # Quando ele so montava o cliente, nao levantava nada, e deixa-lo fora
+        # era inofensivo. Depois passou a conferir a impressao digital do
+        # certificado — e a recusa escapava do except e virava 500, que e
+        # exatamente o que a docstring desta rota promete nunca acontecer.
+        try:
+            client, guard = await open_guard()
+        except LiveGameRefused as e:
+            return JSONResponse(
+                status_code=409, content={"error": e.message, "hint": e.hint}
+            )
+
         try:
             controller = ReplayController(guard)
             alvo = await controller.seek_to_ms(finding.timestamp_ms)

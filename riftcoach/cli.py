@@ -213,7 +213,86 @@ def doctor(
         else:
             console.print("[yellow]Sem chave configurada — APIs nao testadas.[/]")
 
+        console.print()
+        _replay_readiness()
+
     _run(main())
+
+
+def _replay_readiness() -> None:
+    """Checagem do modo replay, separada das APIs da Riot.
+
+    Existe porque as quatro APIs em verde NAO significam que o modo replay
+    funciona: ele depende de tres outras coisas, e cada uma falha de um jeito
+    diferente. Sem isto, quem for testar descobre cada uma na tentativa e erro.
+    """
+    from riftcoach.replay import gamecfg, guard
+
+    t = Table("Modo replay", "Status", "Detalhe")
+
+    cfg = gamecfg.load()
+    if cfg is None:
+        t.add_row("game.cfg", "[yellow]nao achei[/]", "defina RIFTCOACH_GAME_CFG")
+    else:
+        t.add_row("game.cfg", "[green]ok[/]", str(cfg.path))
+        if cfg.replay_api_enabled:
+            t.add_row("Replay API", "[green]ligada[/]", "EnableReplayApi=1")
+        else:
+            t.add_row(
+                "Replay API",
+                "[red]DESLIGADA[/]",
+                "vem assim de fabrica — rode: riftcoach enable-replay-api",
+            )
+        if cfg.resolution:
+            escala = cfg.hud_scale_raw
+            t.add_row(
+                "Video",
+                "[green]ok[/]",
+                f"{cfg.resolution[0]}x{cfg.resolution[1]}"
+                + (f" · GlobalScale={escala}" if escala is not None else ""),
+            )
+
+    try:
+        atual = guard.peer_fingerprint()
+    except OSError:
+        t.add_row(
+            "Client local",
+            "[dim]fechado[/]",
+            f"nada em {guard.HOST}:{guard.PORT} — abra um replay",
+        )
+        console.print(t)
+        return
+
+    if atual in guard.pinned_fingerprints():
+        t.add_row("Certificado", "[green]fixado[/]", f"sha256:{atual[:16]}...")
+    else:
+        t.add_row(
+            "Certificado",
+            "[yellow]nao fixado[/]",
+            "rode: riftcoach pin-cert",
+        )
+        console.print(t)
+        return
+
+    try:
+        import asyncio as _asyncio
+
+        async def _estado() -> str:
+            client, g = await guard.open_guard()
+            try:
+                e = await g.assert_replay_mode()
+                return (
+                    f"rodando em {int(e.time) // 60}:{int(e.time) % 60:02d} "
+                    f"de {int(e.length) // 60}:{int(e.length) % 60:02d}"
+                )
+            finally:
+                await client.aclose()
+
+        t.add_row("Replay", "[green]ok[/]", _asyncio.run(_estado()))
+    except RiftCoachError as e:
+        t.add_row("Replay", "[yellow]nao[/]", e.message)
+
+    console.print(t)
 
 
 @app.command("sync-patch")

@@ -50,16 +50,31 @@ porque o erro é a decisão, não a consequência.
 ```bash
 git clone https://github.com/Kazualkun/LeagueCoaching.git
 cd LeagueCoaching
-uv run riftcoach
+
+uv run riftcoach auth                        # cole sua chave da Riot
+uv run riftcoach sync-patch                  # nomes de itens e runas
+uv run riftcoach analyze "SeuNome#TAG"       # o relatório
 ```
 
-É só isso — o `uv` instala o Python e todas as dependências por você. Um assistente de configuração
-abre no navegador e te guia por:
+O `uv` instala o Python e todas as dependências na primeira execução. Não precisa criar venv nem
+rodar `pip install`.
 
-1. **Uma chave da API da Riot** — gratuita, em
-   [developer.riotgames.com](https://developer.riotgames.com). Guardada no cofre de credenciais do
-   seu sistema operacional, nunca em um arquivo.
-2. **Onde a IA vai rodar** — ele detecta seu hardware e recomenda uma opção:
+Dois comandos que valem conhecer antes de qualquer coisa dar errado:
+
+```bash
+uv run riftcoach doctor     # o que está configurado, o que falta, e por quê
+uv run riftcoach models     # quais provedores de IA existem — e por que os outros não
+```
+
+**Para o modo replay**, há um passo a mais: a Replay API do League vem **desligada de fábrica**.
+
+```bash
+uv run riftcoach enable-replay-api    # adiciona EnableReplayApi=1 no game.cfg, com backup
+uv run riftcoach pin-cert             # fixa o certificado do client (com um replay aberto)
+uv run riftcoach web "SeuNome#TAG"    # relatório no navegador, com clique-para-pular
+```
+
+**Onde a IA vai rodar** — o `models` detecta seu hardware e recomenda:
 
 | Sua GPU | Recomendação |
 |---|---|
@@ -69,9 +84,10 @@ abre no navegador e te guia por:
 | Apple Silicon 16 GB+ | `ollama pull qwen3:14b` |
 | Sem GPU / notebook | Chave gratuita do Google AI Studio → Gemini Flash. Funciona bem. |
 
-3. **Mais nada.** Se todas as opções de IA falharem, você ainda recebe um relatório estatístico
-   completo — percentis de referência, mapas de calor de mortes, eficiência de recall, curvas de
-   ouro — calculado inteiramente offline.
+**Se nenhuma opção de IA estiver disponível, o relatório sai do mesmo jeito** — percentis de
+referência, curva de vantagem, erros medidos com o custo em probabilidade de vitória, eficiência
+de recall. Tudo calculado em Python, nesta máquina. O rodapé sempre diz qual dos dois você
+recebeu.
 
 ---
 
@@ -159,9 +175,10 @@ Detalhamento técnico completo: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 | **5 · Interface web + controle do replay** | ✅ |
 | **7 · Visão: geometria da HUD, amostragem, OCR e sincronia** | ✅ |
 | 7 · Visão: leitura do minimapa por VLM | ☐ |
+| **Modo B validado contra o client real** | ✅ |
 | 7 · Empacotamento Tauri | ☐ |
 
-**547 testes**, `ruff` e `mypy --strict` limpos. Números medidos em 16 partidas reais de SR:
+**576 testes**, `ruff` e `mypy --strict` limpos. Números medidos em 16 partidas reais de SR:
 
 | | |
 |---|---|

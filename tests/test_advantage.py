@@ -262,3 +262,47 @@ def test_blunders_convert_to_marks(loser: MatchFacts) -> None:
     assert s.marks
     assert all(m.author == "ai" and m.wp_loss is not None for m in s.marks)
     assert s.criticals()
+
+
+def test_far_from_the_objective_is_positional_not_team(loser: MatchFacts) -> None:
+    """Regressao vista num relatorio REAL.
+
+    Um Arauto tomado no pit do Barao com o jogador em NEUTRAL_MID_LANE saia
+    como "o time perdeu isto com voce presente" — e ele estava a 3.847 unidades
+    dali. O criterio antigo olhava so o prefixo da zona, e NEUTRAL_MID_LANE nao
+    comeca com OWN_.
+
+    Zona nao responde a pergunta: ela nao distingue mil de nove mil unidades.
+    Os dois casos pedem conselhos opostos — "lute melhor" contra "esteja la".
+    """
+    from riftcoach.analysis.advantage import NEAR_OBJECTIVE_UNITS
+
+    achou_longe = False
+    for b in find_blunders(loser):
+        if not b.kind.startswith("perdeu"):
+            continue
+        o = next(
+            (x for x in loser.objectives if x.t_ms == b.t_ms and not x.taken_by_focus_team),
+            None,
+        )
+        if o is None or o.focus_player_distance_u is None:
+            continue
+        if o.focus_player_distance_u > NEAR_OBJECTIVE_UNITS:
+            assert b.involvement == "positional", (
+                f"{o.kind} a {o.focus_player_distance_u}u virou {b.involvement}"
+            )
+            achou_longe = True
+        else:
+            assert b.involvement == "team"
+    assert achou_longe, "a fixture nao exercitou o caso de estar longe"
+
+
+def test_the_distance_travels_into_the_explanation(loser: MatchFacts) -> None:
+    """O numero que sustenta a acusacao precisa aparecer.
+
+    "voce estava do outro lado do mapa" sem a distancia e opiniao; com ela, o
+    usuario confere.
+    """
+    perdidos = [b for b in find_blunders(loser) if b.kind.startswith("perdeu")]
+    assert perdidos
+    assert any("u do objetivo" in b.detail for b in perdidos)

@@ -154,7 +154,7 @@ Full technical detail: **[docs/ARCHITECTURE.md](docs/en/ARCHITECTURE.md)**
 | **5 · Web UI + replay seeking** | ✅ |
 | 7 · Vision enrichment + Tauri packaging | ☐ |
 
-**547 tests**, `ruff` and `mypy --strict` clean. Numbers measured over 16 real SR matches:
+**576 tests**, `ruff` and `mypy --strict` clean. Numbers measured over 16 real SR matches:
 
 | | |
 |---|---|

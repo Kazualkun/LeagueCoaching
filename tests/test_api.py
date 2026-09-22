@@ -240,3 +240,35 @@ def test_the_page_needs_no_build_step() -> None:
     static = Path(api.__file__).parent / "static"
     arquivos = sorted(p.name for p in static.iterdir())
     assert arquivos == ["index.html"], f"static/ ganhou arquivos: {arquivos}"
+
+
+def test_open_guard_failure_is_409_not_500(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regressao achada rodando a UI de verdade contra o client.
+
+    A rota chamava `open_guard` FORA do try. Enquanto ele so montava o cliente
+    isso era inofensivo; quando passou a conferir a impressao digital do
+    certificado, a recusa escapava do except e virava HTTP 500 — exatamente o
+    que a docstring da rota promete nunca acontecer.
+
+    O conftest neutraliza a conferencia para o resto da suite, entao NENHUM
+    teste via esse caminho. Aqui ela e reativada de proposito.
+    """
+    from riftcoach.core.errors import LiveGameRefused
+
+    def recusa() -> str:
+        raise LiveGameRefused(
+            "o certificado do client nao confere com nenhum fixado",
+            hint="rode `riftcoach pin-cert`",
+        )
+
+    monkeypatch.setattr("riftcoach.replay.guard.assert_pinned_certificate", recusa)
+    api.SESSION.replay_path = Path("fake.rofl")
+
+    r = client.post("/api/seek/0")
+
+    assert r.status_code == 409, "recusa do guard precisa ser 409, nunca 500"
+    d = r.json()
+    assert d["error"]
+    assert d["hint"] and "pin-cert" in d["hint"]
