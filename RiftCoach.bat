@@ -4,18 +4,26 @@ cd /d "%~dp0"
 title RiftCoach AI
 
 REM ===================================================================
-REM  Arquivo unico. O usuario da DOIS CLIQUES aqui e nao precisa saber
-REM  o que e terminal, Python ou uv.
+REM  Arquivo unico. Dois cliques aqui e pronto.
 REM
-REM  Ele so instala o que falta e entrega o resto para `riftcoach start`,
-REM  que conversa com a pessoa um passo de cada vez. A regra: nunca pedir
-REM  duas coisas ao mesmo tempo, e sempre dizer qual e o proximo passo.
+REM  O CAMINHO RAPIDO VEM PRIMEIRO, e isso e de proposito: depois da
+REM  primeira vez, esta janela preta aparece por alguns milissegundos e
+REM  some, porque quem assume e a JANELA do RiftCoach (pythonw, que nao
+REM  tem console). Terminal so aparece quando ha mesmo o que instalar —
+REM  e ai ele e util, porque mostra que alguma coisa esta acontecendo.
 REM ===================================================================
+
+if exist ".venv\Scripts\pythonw.exe" (
+    start "" ".venv\Scripts\pythonw.exe" -m riftcoach gui
+    exit /b 0
+)
 
 echo.
 echo   ====================================================
-echo     RiftCoach AI - analise de partidas de League
+echo     RiftCoach AI - primeira vez, vamos preparar tudo
 echo   ====================================================
+echo.
+echo   Isso acontece UMA vez. Da proxima, abre direto.
 echo.
 
 REM --- 1. O uv existe? Ele instala o Python sozinho, entao e a unica
@@ -23,7 +31,7 @@ REM ---    dependencia real do projeto.
 where uv >nul 2>&1
 if %errorlevel% equ 0 goto :tem_uv
 
-echo   [1/3] Instalando o uv ^(so na primeira vez, leva ~1 minuto^)...
+echo   [1/3] Instalando o uv ^(leva ~1 minuto^)...
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
 
@@ -43,7 +51,7 @@ if %errorlevel% neq 0 (
 )
 
 :tem_uv
-echo   [2/3] Preparando o ambiente ^(a primeira vez demora, depois e rapido^)...
+echo   [2/3] Baixando o que falta ^(Python e bibliotecas^)...
 echo.
 uv sync --extra web --quiet
 if %errorlevel% neq 0 (
@@ -57,10 +65,15 @@ if %errorlevel% neq 0 (
 
 echo   [3/3] Abrindo o RiftCoach...
 echo.
-uv run riftcoach start
 
+if exist ".venv\Scripts\pythonw.exe" (
+    start "" ".venv\Scripts\pythonw.exe" -m riftcoach gui
+    exit /b 0
+)
+
+REM Sem pythonw nao da para esconder o console. Melhor abrir o assistente
+REM de texto, que faz exatamente a mesma coisa, do que nao abrir nada.
+uv run riftcoach start
 echo.
-echo   ====================================================
-echo     Pode fechar esta janela.
-echo   ====================================================
+echo   Pode fechar esta janela.
 pause

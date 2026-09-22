@@ -84,9 +84,7 @@ def test_cache_keys_are_namespaced_by_routing() -> None:
     assert ck.key_match("americas", "BR1_1") != ck.key_match("europe", "BR1_1")
     assert ck.key_match("americas", "BR1_1") != ck.key_timeline("americas", "BR1_1")
     # Riot ID e case-insensitive -> a chave precisa normalizar.
-    assert ck.key_account("americas", "Faker", "KR1") == ck.key_account(
-        "americas", "faker", "kr1"
-    )
+    assert ck.key_account("americas", "Faker", "KR1") == ck.key_account("americas", "faker", "kr1")
 
 
 # --------------------------------------------------------------------------
@@ -95,9 +93,7 @@ def test_cache_keys_are_namespaced_by_routing() -> None:
 
 
 @respx.mock
-async def test_match_is_cached_after_first_fetch(
-    cfg: Settings, cache: RiotCache
-) -> None:
+async def test_match_is_cached_after_first_fetch(cfg: Settings, cache: RiotCache) -> None:
     """A segunda chamada NAO pode tocar a rede. Esse e o ponto do cache."""
     route = respx.get(f"{BASE}/lol/match/v5/matches/BR1_1").mock(
         return_value=httpx.Response(
@@ -128,9 +124,7 @@ async def test_match_ids_are_not_cached(cfg: Settings, cache: RiotCache) -> None
 
 @respx.mock
 async def test_401_raises_key_invalid_with_hint(cfg: Settings, cache: RiotCache) -> None:
-    respx.get(f"{BASE}/lol/match/v5/matches/BR1_1").mock(
-        return_value=httpx.Response(401, json={})
-    )
+    respx.get(f"{BASE}/lol/match/v5/matches/BR1_1").mock(return_value=httpx.Response(401, json={}))
     async with RiotClient(config=cfg, cache=cache) as rc:
         with pytest.raises(RiotKeyInvalid) as e:
             await rc.match("BR1_1")
@@ -138,17 +132,13 @@ async def test_401_raises_key_invalid_with_hint(cfg: Settings, cache: RiotCache)
 
 
 @respx.mock
-async def test_403_is_reported_as_expired_dev_key(
-    cfg: Settings, cache: RiotCache
-) -> None:
+async def test_403_is_reported_as_expired_dev_key(cfg: Settings, cache: RiotCache) -> None:
     """403 nas nossas 4 rotas e quase sempre chave de dev expirada.
 
     Dar a dica util em vez da generica e a diferenca entre o usuario resolver
     em 30 segundos ou abrir uma issue.
     """
-    respx.get(f"{BASE}/lol/match/v5/matches/BR1_1").mock(
-        return_value=httpx.Response(403, json={})
-    )
+    respx.get(f"{BASE}/lol/match/v5/matches/BR1_1").mock(return_value=httpx.Response(403, json={}))
     async with RiotClient(config=cfg, cache=cache) as rc:
         with pytest.raises(RiotKeyExpired) as e:
             await rc.match("BR1_1")
@@ -196,9 +186,7 @@ async def test_5xx_is_retried(cfg: Settings, cache: RiotCache) -> None:
 @respx.mock
 async def test_rate_limit_header_is_adopted(cfg: Settings, cache: RiotCache) -> None:
     respx.get(f"{BASE}/lol/match/v5/matches/BR1_1").mock(
-        return_value=httpx.Response(
-            200, json={}, headers={"X-App-Rate-Limit": "500:10,30000:600"}
-        )
+        return_value=httpx.Response(200, json={}, headers={"X-App-Rate-Limit": "500:10,30000:600"})
     )
     async with RiotClient(config=cfg, cache=cache) as rc:
         await rc.match("BR1_1")
@@ -273,19 +261,13 @@ async def test_riot_message_is_surfaced(cfg: Settings, cache: RiotCache) -> None
 
 
 @respx.mock
-async def test_401_and_403_give_different_advice(
-    cfg: Settings, cache: RiotCache
-) -> None:
+async def test_401_and_403_give_different_advice(cfg: Settings, cache: RiotCache) -> None:
     """401 = chave substituida -> pegue a atual no dashboard.
     403 = chave conhecida, porem expirada -> gere uma nova.
     Dar a mesma dica nos dois casos manda o usuario para o caminho errado.
     """
-    respx.get(f"{BASE}/lol/match/v5/matches/A").mock(
-        return_value=httpx.Response(401, json={})
-    )
-    respx.get(f"{BASE}/lol/match/v5/matches/B").mock(
-        return_value=httpx.Response(403, json={})
-    )
+    respx.get(f"{BASE}/lol/match/v5/matches/A").mock(return_value=httpx.Response(401, json={}))
+    respx.get(f"{BASE}/lol/match/v5/matches/B").mock(return_value=httpx.Response(403, json={}))
     async with RiotClient(config=cfg, cache=cache) as rc:
         with pytest.raises(RiotKeyInvalid) as a:
             await rc.match("A")

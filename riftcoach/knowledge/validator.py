@@ -229,8 +229,7 @@ def validate_findings(
                     Violation(
                         ViolationKind.STALE_ENTITY,
                         i,
-                        f"cita '{nome}' ({scanner.kind_of(nome)}), que nao existe no "
-                        f"patch {patch}",
+                        f"cita '{nome}' ({scanner.kind_of(nome)}), que nao existe no patch {patch}",
                     )
                 )
 

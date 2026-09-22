@@ -247,8 +247,7 @@ class OpenAICompatProvider:
             texto = dados["choices"][0]["message"]["content"] or ""
         except (ValueError, KeyError, IndexError, TypeError) as e:
             raise ProviderCallError(
-                f"{self.profile.name} devolveu resposta em formato inesperado: "
-                f"{resp.text[:200]}",
+                f"{self.profile.name} devolveu resposta em formato inesperado: {resp.text[:200]}",
                 kind="transient",
             ) from e
 

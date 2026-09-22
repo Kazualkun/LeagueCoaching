@@ -512,9 +512,7 @@ def rule_death_clusters(ctx: RuleContext) -> list[Finding]:
                     phase=phase_of(b.t_ms),
                     severity=2,
                     timestamp_ms=b.t_ms,
-                    claim=(
-                        f"Duas mortes em {(b.t_ms - a.t_ms) // 1000}s — {a.t} e {b.t}."
-                    ),
+                    claim=(f"Duas mortes em {(b.t_ms - a.t_ms) // 1000}s — {a.t} e {b.t}."),
                     evidence=[
                         _t1(f"{a.t} morreu em {a.zone}", a.t_ms),
                         _t1(f"{b.t} morreu em {b.zone}", b.t_ms),

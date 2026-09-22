@@ -209,21 +209,15 @@ def create_app() -> Any:
         try:
             client, guard = await open_guard()
         except LiveGameRefused as e:
-            return JSONResponse(
-                status_code=409, content={"error": e.message, "hint": e.hint}
-            )
+            return JSONResponse(status_code=409, content={"error": e.message, "hint": e.hint})
 
         try:
             controller = ReplayController(guard)
             alvo = await controller.seek_to_ms(finding.timestamp_ms)
-            await controller.focus_camera(
-                SESSION.facts.focus.champion if SESSION.facts else None
-            )
+            await controller.focus_camera(SESSION.facts.focus.champion if SESSION.facts else None)
             return {"ok": True, "replay_time_s": round(alvo, 2), "at": mmss(finding.seek_ms)}
         except LiveGameRefused as e:
-            return JSONResponse(
-                status_code=409, content={"error": e.message, "hint": e.hint}
-            )
+            return JSONResponse(status_code=409, content={"error": e.message, "hint": e.hint})
         finally:
             await client.aclose()
 

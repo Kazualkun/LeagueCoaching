@@ -26,13 +26,46 @@ O RiftCoach não automatiza nada e não roda durante partidas ao vivo, ponto.
 ## O que o RiftCoach nunca faz
 
 - Rodar, inferir, alertar ou exibir qualquer coisa durante uma partida ao vivo
-- Sobrepor um overlay ao client do jogo
+- Sobrepor qualquer coisa a uma partida ao vivo
 - Simular input, automatizar ações ou interagir com o processo do jogo
 - Ler memória do jogo ou injetar código
 - Revelar informação indisponível ao jogador (nada de dados sob fog of war, nada de cooldowns
   inimigos a partir de estado oculto, nada de tracking de jungle durante partida ao vivo)
 - Fazer scraping de sites terceiros (op.gg, u.gg, porofessor) ou violar os termos deles
 - Transmitir dados do usuário para qualquer lugar que o usuário não tenha configurado explicitamente
+
+## O overlay sobre o replay
+
+O RiftCoach desenha marcações por cima da janela do jogo **enquanto um replay está sendo
+reproduzido**. Como essa é a pergunta mais direta que alguém pode fazer sobre compatibilidade com as
+regras, aqui está a resposta inteira.
+
+**A distinção é entre partida ao vivo e gravação, e ela não é retórica — é estrutural.**
+
+| | Partida ao vivo | Replay |
+|---|---|---|
+| A partida já terminou? | Não | Sim, e o resultado já está no histórico |
+| Dá vantagem competitiva? | Daria | Não há partida acontecendo para vencer |
+| O que a Riot oferece para isso? | Nada | A Replay API, documentada, com controle de câmera e de tempo |
+| O RiftCoach consegue chegar lá? | **Não** — `ReplayGuard` recusa | Sim |
+
+O overlay é um processo comum do Windows desenhando numa janela transparente sua. Ele **não toca no
+processo do jogo**: não injeta código, não lê memória, não desenha dentro do motor gráfico, não
+envia input. Ele lê o relógio do replay pela Replay API oficial — a mesma que já era usada para o
+botão de pular — e desenha ao lado.
+
+Um treinador de futebol pausando o vídeo de domingo e desenhando por cima é a analogia exata, e a
+Riot publica a Replay API justamente para esse uso.
+
+**O intertravamento continua sendo o mesmo, e continua sendo o único caminho.** O overlay não abre
+socket, não conhece a porta 2999 e não monta URL: ele pede ao `ReplayController`, que pede ao
+`ReplayGuard`, que confere `GET /replay/playback` **antes de cada requisição**. Numa partida ao vivo
+essa rota devolve 404 e o overlay nunca chega a existir. Nada foi afrouxado para essa funcionalidade
+entrar.
+
+Sobre os atalhos de marcação (`Ctrl+Alt+E` e companhia): o RiftCoach **lê** o estado do teclado pelo
+sistema operacional, somente enquanto a janela do League está em primeiro plano, e **nunca envia**
+tecla ou clique para lugar nenhum. É a mesma coisa que um gravador de tela com atalho global.
 
 ## O mecanismo de aplicação
 
@@ -85,9 +118,13 @@ significa que um MITM local não consegue alimentar o app com estado de jogo fab
 ## Política para contribuidores
 
 PRs que introduzam funcionalidade durante partida ao vivo são fechados sem revisão. Isso inclui
-overlays, alertas ao vivo, HUDs ao vivo "somente leitura" e qualquer coisa que leia estado do client
-fora do modo replay — não importa como seja apresentado. Essa restrição é o que torna o projeto
-seguro de recomendar, e ela não é negociável por nenhuma funcionalidade.
+overlays ao vivo, alertas ao vivo, HUDs ao vivo "somente leitura" e qualquer coisa que leia estado do
+client fora do modo replay — não importa como seja apresentado. Essa restrição é o que torna o
+projeto seguro de recomendar, e ela não é negociável por nenhuma funcionalidade.
+
+O overlay de replay não é exceção a essa regra: ele passa pelo mesmo `ReplayGuard`, e é justamente
+por isso que ele pôde existir. Um PR que desenhe na tela sem passar por ali é a mesma coisa que um
+PR de partida ao vivo, ainda que hoje só rode em replay.
 
 ## Aviso legal
 

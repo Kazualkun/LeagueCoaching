@@ -26,7 +26,7 @@ RiftCoach does not automate anything and does not run during live games at all.
 ## What RiftCoach never does
 
 - Run, infer, alert or display anything during a live game
-- Overlay the game client
+- Overlay anything onto a live game
 - Simulate input, automate actions, or interact with the game process
 - Read game memory or inject code
 - Reveal information not available to the player (no fog-of-war data, no enemy cooldowns from
@@ -79,12 +79,44 @@ local MITM cannot feed the app fabricated game state.
 - The benchmark dataset published by the project contains only aggregate percentiles. No PUUIDs, no
   per-player rows, no identifiable data.
 
+## The replay overlay
+
+RiftCoach draws marks on top of the game window **while a replay is playing**. Since that is the
+most direct question anyone can ask about compliance, here is the whole answer.
+
+**The distinction is between a live game and a recording, and it is structural, not rhetorical.**
+
+| | Live game | Replay |
+|---|---|---|
+| Is the game over? | No | Yes, and the result is already in your history |
+| Competitive advantage? | It would be | There is no game in progress to win |
+| What does Riot provide for it? | Nothing | The documented Replay API, with camera and time control |
+| Can RiftCoach get there? | **No** — `ReplayGuard` refuses | Yes |
+
+The overlay is an ordinary Windows process drawing in its own transparent window. It **does not
+touch the game process**: no code injection, no memory reads, no drawing inside the renderer, no
+input. It reads the replay clock through the official Replay API — the same one already used for
+the jump-to-moment button — and draws alongside.
+
+**The interlock is unchanged, and it is still the only path.** The overlay opens no socket, knows
+no port and builds no URL: it asks `ReplayController`, which asks `ReplayGuard`, which checks
+`GET /replay/playback` **before every request**. In a live game that route 404s and the overlay
+never comes into existence. Nothing was loosened to let this feature in.
+
+On the marking hotkeys (`Ctrl+Alt+E` and friends): RiftCoach **reads** keyboard state from the OS,
+only while the League window is in the foreground, and **never sends** a key or click anywhere. It
+is the same thing a screen recorder with a global hotkey does.
+
 ## Contributor policy
 
-PRs that introduce live-game functionality are closed without review. This includes overlays,
+PRs that introduce live-game functionality are closed without review. This includes live overlays,
 live alerts, "read-only" live HUDs, and anything that reads client state outside replay mode — no
 matter how it is framed. The constraint is what makes the project safe to recommend, and it is not
 negotiable for any feature.
+
+The replay overlay is not an exception to that rule: it goes through the same `ReplayGuard`, and
+that is precisely why it could exist. A PR that draws on screen without going through it is a
+live-game PR, even if today it only runs in replay.
 
 ## Disclaimer
 

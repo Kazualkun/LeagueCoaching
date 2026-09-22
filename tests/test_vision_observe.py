@@ -110,9 +110,7 @@ def test_a_drifted_frame_is_refused() -> None:
 def test_an_empty_reading_produces_no_observation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Observacao vazia nao e inofensiva: ocuparia contexto e pareceria
     confirmacao de alguma coisa."""
-    monkeypatch.setattr(
-        "riftcoach.vision.observe.read_hud", lambda *a, **k: HudReading()
-    )
+    monkeypatch.setattr("riftcoach.vision.observe.read_hud", lambda *a, **k: HudReading())
     frame = FakeFrame(t_s=900.0, drift_s=0.0)
     assert observe(frame, FakeCalibration(38.0)) is None  # type: ignore[arg-type]
 
@@ -138,9 +136,7 @@ def test_the_frames_own_clock_beats_the_calibration(
 def test_without_a_clock_the_calibration_is_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "riftcoach.vision.observe.read_hud", lambda *a, **k: HudReading(gold=1000)
-    )
+    monkeypatch.setattr("riftcoach.vision.observe.read_hud", lambda *a, **k: HudReading(gold=1000))
     frame = FakeFrame(t_s=900.0, drift_s=0.0)
     obs = observe(frame, FakeCalibration(38.0))  # type: ignore[arg-type]
     assert obs is not None
@@ -151,9 +147,7 @@ def test_without_a_clock_the_calibration_is_used(
 def test_timeline_never_goes_negative(monkeypatch: pytest.MonkeyPatch) -> None:
     """Quadro antes do inicio da partida (tela de carregamento) com uma
     calibracao grande daria instante negativo — que o schema recusa."""
-    monkeypatch.setattr(
-        "riftcoach.vision.observe.read_hud", lambda *a, **k: HudReading(gold=500)
-    )
+    monkeypatch.setattr("riftcoach.vision.observe.read_hud", lambda *a, **k: HudReading(gold=500))
     frame = FakeFrame(t_s=5.0, drift_s=0.0)
     obs = observe(frame, FakeCalibration(60.0))  # type: ignore[arg-type]
     assert obs is not None

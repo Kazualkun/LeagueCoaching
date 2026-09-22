@@ -62,6 +62,7 @@ class AiTrace:
     def used_ai(self) -> bool:
         return bool(self.by_analyst) and any(self.by_analyst.values())
 
+
 CATEGORY_PT: dict[str, str] = {
     "wave": "wave",
     "trading": "trocas",
@@ -146,8 +147,7 @@ def render_report(
     linhas += [
         "",
         "=" * 72,
-        f"patch {facts.patch} · parser v{facts.parser_version} · "
-        f"{len(report.findings)} findings",
+        f"patch {facts.patch} · parser v{facts.parser_version} · {len(report.findings)} findings",
     ]
     if report.model_trace and trace is not None and trace.used_ai:
         modelos = ", ".join(f"{k} [{v}]" for k, v in sorted(report.model_trace.items()))

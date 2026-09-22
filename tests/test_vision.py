@@ -83,9 +83,7 @@ def test_hud_scale_shrinks_every_roi() -> None:
         (Anchor.BOTTOM_RIGHT, "direita-baixo"),
     ],
 )
-def test_every_anchor_pulls_toward_its_own_corner(
-    anchor: Anchor, esperado: str
-) -> None:
+def test_every_anchor_pulls_toward_its_own_corner(anchor: Anchor, esperado: str) -> None:
     """Deslocamento sempre cresce para DENTRO da tela, qualquer que seja o
     canto — senao cada ROI precisaria inverter sinal na mao."""
     r = Roi("t", anchor, dx=0.05, dy=0.05, w=0.1, h=0.1)

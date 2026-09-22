@@ -109,8 +109,7 @@ class RiotCache:
 
     async def stats(self) -> CacheStats:
         async with self.db.execute(
-            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)),0), COALESCE(SUM(raw_bytes),0)"
-            " FROM raw"
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)),0), COALESCE(SUM(raw_bytes),0) FROM raw"
         ) as cur:
             row = await cur.fetchone()
         assert row is not None

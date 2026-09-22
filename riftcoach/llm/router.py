@@ -149,9 +149,7 @@ class ModelRouter:
                     )
                     continue
                 if hw.tier == "none":
-                    notas[cfg.name] = (
-                        f"{hw.describe()} — nenhum modelo local cabe nesta maquina"
-                    )
+                    notas[cfg.name] = f"{hw.describe()} — nenhum modelo local cabe nesta maquina"
                     continue
 
             chave = cfg.resolve_key()
@@ -175,9 +173,7 @@ class ModelRouter:
                 notas[cfg.name] = "nenhum modelo de texto disponivel"
                 continue
 
-            providers.append(
-                OpenAICompatProvider(cfg, modelo, api_key=chave, client=client)
-            )
+            providers.append(OpenAICompatProvider(cfg, modelo, api_key=chave, client=client))
 
         r = cls(
             providers=providers,
@@ -220,15 +216,11 @@ class ModelRouter:
         for p in self.providers:
             perfil = p.profile
             if not self.policy.allows(perfil):
-                linhas.append(
-                    f"  {perfil.name}: privacy_mode=strict bloqueia provedores de nuvem"
-                )
+                linhas.append(f"  {perfil.name}: privacy_mode=strict bloqueia provedores de nuvem")
             elif not perfil.supports(task):
                 faltando = task.requires - perfil.caps
                 if faltando:
-                    linhas.append(
-                        f"  {perfil.name}: nao tem {', '.join(sorted(faltando))}"
-                    )
+                    linhas.append(f"  {perfil.name}: nao tem {', '.join(sorted(faltando))}")
                 else:
                     linhas.append(
                         f"  {perfil.name}: contexto de {perfil.ctx_tokens} tokens e "
@@ -251,16 +243,14 @@ class ModelRouter:
     def available(self) -> bool:
         """Ha algum provedor utilizavel? A CLI usa isto para decidir entre o
         caminho com IA e o L5, sem precisar provocar uma excecao."""
-        return bool(
-            [p for p in self.providers if self.policy.allows(p.profile)]
-        ) and any(self.guard.breaker.is_closed(p.profile.name) for p in self.providers)
+        return bool([p for p in self.providers if self.policy.allows(p.profile)]) and any(
+            self.guard.breaker.is_closed(p.profile.name) for p in self.providers
+        )
 
     def describe(self) -> str:
         if not self.providers:
             return "nenhum provedor de IA disponivel — relatorio sem IA (L5)"
-        return " · ".join(
-            f"{p.profile.name} [{p.profile.cost_class}]" for p in self.providers
-        )
+        return " · ".join(f"{p.profile.name} [{p.profile.cost_class}]" for p in self.providers)
 
     # ------------------------------------------------------------------
     # Execucao com validacao
@@ -340,8 +330,7 @@ class ModelRouter:
             return validado
 
         raise SchemaExhausted(
-            f"nenhum provedor sustentou o schema de '{task.name}' em "
-            f"{SCHEMA_ATTEMPTS} tentativas",
+            f"nenhum provedor sustentou o schema de '{task.name}' em {SCHEMA_ATTEMPTS} tentativas",
             hint=(
                 f"Provedores tentados: {', '.join(sorted(tentados))}. "
                 "O relatorio sem IA continua disponivel e nao depende disto. "

@@ -94,9 +94,7 @@ def test_hud_scale_is_exposed_raw(cfg_desligada: Path) -> None:
     assert cfg.minimap_scale_raw == pytest.approx(1.29)
 
 
-def test_malformed_values_do_not_crash(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_malformed_values_do_not_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "game.cfg"
     p.write_text("[HUD]\nGlobalScale=abc\n[General]\nWidth=x\nHeight=y\n", encoding="utf-8")
     monkeypatch.setenv("RIFTCOACH_GAME_CFG", str(p))

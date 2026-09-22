@@ -158,18 +158,14 @@ OCR_ROIS: tuple[Roi, ...] = (GAME_CLOCK, CS, GOLD, KDA)
 # esta SEMPRE em espectador. Este e o perfil primario dali, e o de jogador so
 # serve para o Modo C, com gravacao da propria tela em jogo.
 
-SPEC_GAME_CLOCK = Roi(
-    "game_clock", Anchor.TOP_CENTER, dx=0.004, dy=0.067, w=0.053, h=0.026
-)
+SPEC_GAME_CLOCK = Roi("game_clock", Anchor.TOP_CENTER, dx=0.004, dy=0.067, w=0.053, h=0.026)
 SPEC_TEAM_GOLD_LEFT = Roi(
     "team_gold_left", Anchor.TOP_CENTER, dx=-0.124, dy=0.014, w=0.060, h=0.021
 )
 SPEC_TEAM_GOLD_RIGHT = Roi(
     "team_gold_right", Anchor.TOP_CENTER, dx=0.164, dy=0.014, w=0.060, h=0.021
 )
-SPEC_MINIMAP = Roi(
-    "minimap", Anchor.BOTTOM_RIGHT, dx=0.006, dy=0.011, w=0.239, h=0.239
-)
+SPEC_MINIMAP = Roi("minimap", Anchor.BOTTOM_RIGHT, dx=0.006, dy=0.011, w=0.239, h=0.239)
 
 SPECTATOR_ALL: tuple[Roi, ...] = (
     SPEC_GAME_CLOCK,

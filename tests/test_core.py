@@ -267,9 +267,7 @@ def test_buildings_land_in_their_own_lane(
         ((1172, 3583), "TOP_LANE/INHIBITOR_BUILDING azul"),
     ],
 )
-def test_inhibitor_towers_are_lane_not_base(
-    ponto: tuple[int, int], origem: str
-) -> None:
+def test_inhibitor_towers_are_lane_not_base(ponto: tuple[int, int], origem: str) -> None:
     """Regressao: com BASE_RADIUS=2300 as torres de inibidor eram engolidas pela
     base. Inibidor e estrutura de ROTA — classificar como base apagaria a
     diferenca entre 'perdeu o inibidor' e 'lutou na base'."""

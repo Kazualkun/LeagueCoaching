@@ -120,9 +120,7 @@ def test_changing_patch_clears_the_cache(db: PatchDB) -> None:
 
 
 def _mock_ddragon() -> None:
-    respx.get(f"{DDRAGON}/api/versions.json").mock(
-        return_value=httpx.Response(200, json=VERSIONS)
-    )
+    respx.get(f"{DDRAGON}/api/versions.json").mock(return_value=httpx.Response(200, json=VERSIONS))
     respx.get(url__regex=rf"{DDRAGON}/cdn/.+/item\.json").mock(
         return_value=httpx.Response(
             200,

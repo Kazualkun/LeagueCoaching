@@ -7,6 +7,8 @@ A interface web (etapa 5) e uma casca sobre estas mesmas funcoes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Annotated, Any
@@ -31,6 +33,26 @@ from riftcoach.parse.distill import distill
 from riftcoach.parse.facts import PARSER_VERSION, MatchFacts
 from riftcoach.riot.cache import RiotCache
 from riftcoach.riot.client import RiotClient
+
+
+def _console_em_utf8() -> None:
+    """Faz o console do Windows aceitar acento, travessao e os simbolos da UI.
+
+    O console herda a code page do sistema — cp1252 no Brasil — e ali qualquer
+    caractere fora dela vira `?` ou estoura. Isso aparecia na propria saida
+    deste programa: os travessoes das mensagens sairam como `?` o tempo todo.
+
+    Precisa ser feito ANTES de qualquer escrita, por isso esta no topo do
+    modulo. Se o stream nao aceitar reconfiguracao (saida redirecionada para
+    um pipe exotico, por exemplo), seguir sem acento e melhor que travar a CLI
+    inteira por causa de tipografia.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, OSError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
+_console_em_utf8()
 
 app = typer.Typer(
     add_completion=False,
@@ -79,6 +101,17 @@ def _split_riot_id(riot_id: str) -> tuple[str, str]:
     return name.strip(), tag.strip()
 
 
+def _run_resultado(coro: Any) -> Any:
+    """Como `_run`, mas devolvendo o que a corrotina produziu."""
+    try:
+        return asyncio.run(coro)
+    except RiftCoachError as e:
+        console.print(f"[bold red]Erro:[/] {e.message}")
+        if e.hint:
+            console.print(f"[yellow]{e.hint}[/]")
+        raise typer.Exit(code=1) from None
+
+
 def _run(coro: object) -> None:
     """Executa uma corrotina e traduz erros do dominio em saida amigavel."""
     try:
@@ -92,9 +125,7 @@ def _run(coro: object) -> None:
 
 @app.command()
 def auth(
-    key: Annotated[
-        str, typer.Option(prompt="Chave da API da Riot (RGAPI-...)", hide_input=True)
-    ],
+    key: Annotated[str, typer.Option(prompt="Chave da API da Riot (RGAPI-...)", hide_input=True)],
 ) -> None:
     """Guarda a chave da Riot no cofre de credenciais do sistema operacional."""
     key = key.strip()
@@ -102,9 +133,7 @@ def auth(
         console.print("[yellow]Aviso:[/] chaves normalmente comecam com 'RGAPI-'.")
     if write_key_to_keyring("riot", key):
         console.print("[green]Chave guardada no cofre do sistema.[/]")
-        console.print(
-            "[dim]Se voce tinha a chave em um arquivo de texto, apague-o agora.[/]"
-        )
+        console.print("[dim]Se voce tinha a chave em um arquivo de texto, apague-o agora.[/]")
     else:
         console.print(
             "[red]Nao foi possivel acessar o cofre de credenciais.[/]\n"
@@ -115,22 +144,44 @@ def auth(
 
 @app.command()
 def start() -> None:
-    """Assistente guiado. E o que o RiftCoach.bat abre.
+    """Assistente guiado em texto, para quem esta no terminal.
 
-    Pensado para quem nao sabe o que e terminal: um passo de cada vez, sem
-    jargao, e sempre dizendo qual e o proximo. O `doctor` continua sendo a
-    ferramenta de quem entende — ele diz o que esta errado; o assistente
-    resolve.
+    Um passo de cada vez, sem jargao, sempre dizendo qual e o proximo. O
+    `doctor` continua sendo a ferramenta de quem entende — ele diz o que esta
+    errado; o assistente resolve.
+
+    Quem deu dois cliques no RiftCoach.bat NAO cai aqui: cai em `gui`, que faz
+    o mesmo numa janela.
     """
     from riftcoach.wizard import run
 
     try:
         run()
     except KeyboardInterrupt:
+        console.print("\n[dim]Interrompido. Nada foi perdido — abra de novo quando quiser.[/]")
+
+
+@app.command()
+def gui() -> None:
+    """Abre a janela do RiftCoach. E o que o RiftCoach.bat abre.
+
+    Mesmos passos do `start`, so que visuais: quem joga League nao tem por que
+    aceitar digitar num terminal preto para revisar a propria partida.
+    """
+    try:
+        from riftcoach.gui.app import main
+    except ImportError:
+        # O tkinter acompanha o Python em praticamente toda instalacao no
+        # Windows, inclusive a que o uv baixa. Mas se faltar, cair no
+        # assistente de texto e melhor do que dizer "nao deu" e parar: a
+        # pessoa ainda consegue fazer tudo.
         console.print(
-            "\n[dim]Interrompido. Nada foi perdido — "
-            "abra de novo quando quiser.[/]"
+            "[yellow]A parte grafica nao esta disponivel neste Python.[/]\n"
+            "[dim]Seguindo pelo assistente de texto — funciona igual.[/]\n"
         )
+        start()
+        return
+    main()
 
 
 @app.command()
@@ -209,15 +260,13 @@ def doctor(
                     try:
                         out = await fabrica()
                         n = len(out) if isinstance(out, list) else 0
-                        results.add_row(
-                            label, host, "[green]ok[/]", f"{n} registro(s)"
-                        )
+                        results.add_row(label, host, "[green]ok[/]", f"{n} registro(s)")
                     except RiftCoachError as e:
                         results.add_row(label, host, "[red]falhou[/]", e.message)
         console.print(results)
         if not riot_id:
             console.print(
-                "\n[dim]Passe --riot-id \"Nome#TAG\" para testar ACCOUNT-V1, "
+                '\n[dim]Passe --riot-id "Nome#TAG" para testar ACCOUNT-V1, '
                 "MATCH-V5 e LEAGUE-V4 tambem.[/]"
             )
 
@@ -368,9 +417,7 @@ def sync_match_patches() -> None:
             for k in await cache.keys("match:"):
                 m = await cache.get(k)
                 if m:
-                    patches.add(
-                        ".".join(m["info"].get("gameVersion", "").split(".")[:2])
-                    )
+                    patches.add(".".join(m["info"].get("gameVersion", "").split(".")[:2]))
         db = PatchDB()
         for p in sorted(x for x in patches if x):
             try:
@@ -518,8 +565,7 @@ def fetch(
             acct = await rc.account_by_riot_id(name, tag)
             puuid = acct["puuid"]
             console.print(
-                f"[bold]{acct.get('gameName')}#{acct.get('tagLine')}[/] "
-                f"[dim]({rc.routing})[/]"
+                f"[bold]{acct.get('gameName')}#{acct.get('tagLine')}[/] [dim]({rc.routing})[/]"
             )
 
             ids = await rc.match_ids(puuid, count=count, queue=queue)
@@ -532,9 +578,7 @@ def fetch(
                 cached_m = await rc.cache.has(f"match:{rc.routing}:{mid}")
                 m = await rc.match(mid)
                 info = m["info"]
-                me = next(
-                    (p for p in info["participants"] if p["puuid"] == puuid), None
-                )
+                me = next((p for p in info["participants"] if p["puuid"] == puuid), None)
                 tl_mark = "[dim]-[/]"
                 if timeline:
                     cached_t = await rc.cache.has(f"timeline:{rc.routing}:{mid}")
@@ -546,10 +590,7 @@ def fetch(
                 if me is not None:
                     champ = me.get("championName", "?")
                     kda = f"{me['kills']}/{me['deaths']}/{me['assists']}"
-                    result = (
-                        f"{'[green]V[/]' if me.get('win') else '[red]D[/]'} "
-                        f"{champ} {kda}"
-                    )
+                    result = f"{'[green]V[/]' if me.get('win') else '[red]D[/]'} {champ} {kda}"
                 table.add_row(
                     mid,
                     "[dim]cache[/]" if cached_m else "[green]novo[/]",
@@ -679,9 +720,7 @@ def analyze(
                     console.print("[yellow]Nenhuma partida encontrada.[/]")
                     return
                 if last > len(ids):
-                    console.print(
-                        f"[yellow]So achei {len(ids)} partidas; usando a mais antiga.[/]"
-                    )
+                    console.print(f"[yellow]So achei {len(ids)} partidas; usando a mais antiga.[/]")
                 alvo = ids[min(last, len(ids)) - 1]
 
             console.print(f"[dim]Analisando {alvo}...[/]")
@@ -725,9 +764,7 @@ def analyze(
             finally:
                 await router.aclose()
         else:
-            _report, texto = build_l5(
-                facts, tier=tier, history=anteriores or None, resolver=db
-            )
+            _report, texto = build_l5(facts, tier=tier, history=anteriores or None, resolver=db)
 
         if output:
             output.write_text(texto, encoding="utf-8")
@@ -761,9 +798,7 @@ def web(
 
     async def preparar() -> None:
         console.print("[dim]Analisando...[/]")
-        sessao = await prepare_session(
-            riot_id, match_id=match_id, last=last, use_ai=ai
-        )
+        sessao = await prepare_session(riot_id, match_id=match_id, last=last, use_ai=ai)
         assert sessao.facts is not None
         f = sessao.facts
         console.print(
@@ -841,8 +876,7 @@ def models(
             try:
                 escolhido = router.select(tarefa)
                 console.print(
-                    f"\n[green]Escolhido para um passe de analista:[/] "
-                    f"{escolhido.profile.name}"
+                    f"\n[green]Escolhido para um passe de analista:[/] {escolhido.profile.name}"
                 )
             except RiftCoachError as e:
                 console.print(f"\n[yellow]{e.hint or e.message}[/]")
@@ -876,6 +910,127 @@ def cache_cmd(
                     console.print(f"  {k}")
 
     _run(main())
+
+
+@app.command()
+def overlay(
+    riot_id: Annotated[str, typer.Argument(help="Nome#TAG")],
+    match_id: Annotated[
+        str | None, typer.Option("--match", "-m", help="Partida especifica")
+    ] = None,
+    last: Annotated[int, typer.Option("--last", "-l")] = 1,
+    ai: Annotated[bool, typer.Option("--ai/--no-ai")] = True,
+    hud_scale: Annotated[
+        float, typer.Option("--hud-scale", help="Escala de interface do jogo (1.0 = 100%)")
+    ] = 1.0,
+    rotated: Annotated[
+        bool, typer.Option("--minimap-girado", help="Voce joga com 'girar minimapa' ligado")
+    ] = False,
+    atalhos: Annotated[bool, typer.Option("--atalhos/--sem-atalhos")] = True,
+    reanalisar: Annotated[
+        bool,
+        typer.Option(
+            "--reanalisar/--usar-marcacoes-salvas",
+            help="Refazer a analise, ou aproveitar as marcacoes ja gravadas",
+        ),
+    ] = True,
+) -> None:
+    """Desenha as marcacoes POR CIMA do replay, enquanto ele roda.
+
+    Abra o replay no client do League primeiro. O overlay acompanha o relogio
+    do replay e mostra cada erro alguns segundos ANTES de ele acontecer, para
+    voce saber o que olhar — e nao so o que aconteceu.
+
+    Durante o replay, com a janela do jogo na frente:
+
+        Ctrl+Alt+E   marcar um erro seu
+        Ctrl+Alt+N   marcar uma anotacao
+        Ctrl+Alt+G   marcar algo que voce fez bem
+        Ctrl+Alt+Q   marcar uma duvida
+        Ctrl+Alt+S   pular para a proxima marcacao
+        Ctrl+Alt+R   voltar para onde voce parou da ultima vez
+        Ctrl+Alt+H   esconder o overlay
+
+    As suas marcacoes e a sua posicao ficam salvas: ao reabrir a mesma partida
+    tudo volta.
+    """
+    from riftcoach.overlay.prepare import preparar
+    from riftcoach.overlay.run import executar
+
+    async def main() -> None:
+        console.print("[dim]Analisando a partida...[/]")
+        pre = await preparar(
+            riot_id,
+            match_id=match_id,
+            last=last,
+            use_ai=ai,
+            hud_scale=hud_scale,
+            minimap_rotated=rotated,
+            reanalisar=reanalisar,
+        )
+        f = pre.facts
+        console.print(
+            f"[bold]{f.focus.champion}[/] {f.focus.kills}/{f.focus.deaths}/"
+            f"{f.focus.assists} · [bold]{len(pre.state.marks)}[/] marcacoes"
+        )
+        console.print(
+            "[dim]Abra o replay no client do League. Procurando...[/] [dim](Ctrl+C para sair)[/]"
+        )
+        res = await executar(
+            pre.state, pre.session, atalhos=atalhos, log=lambda m: console.print(f"  [dim]{m}[/]")
+        )
+        if res.marcas_do_usuario:
+            console.print(f"[green]{res.marcas_do_usuario}[/] marcacoes suas salvas.")
+        if res.motivo:
+            console.print(f"[dim]{res.motivo}[/]")
+
+    _run(main())
+
+
+@app.command("marcacoes")
+def marcacoes_cmd(
+    match_id: Annotated[str, typer.Argument(help="Id da partida, ex.: BR1_3061234567")],
+    riot_id: Annotated[str, typer.Option("--riot-id", help="Nome#TAG")],
+    formato: Annotated[str, typer.Option("--formato", help="texto ou json")] = "texto",
+) -> None:
+    """Mostra as marcacoes de uma revisao, para colar num Discord ou arquivar."""
+    from riftcoach.core.review import export_marks, json_marks, load_session
+
+    async def main() -> None:
+        nome, tag = _split_riot_id(riot_id)
+        async with RiotClient() as rc:
+            conta = await rc.account_by_riot_id(nome, tag)
+        rs = load_session(match_id, conta["puuid"])
+        if rs is None:
+            console.print(
+                f"[yellow]Nenhuma revisao guardada para {match_id}.[/]\n"
+                "[dim]Rode 'riftcoach overlay' ou 'riftcoach analyze' nessa "
+                "partida primeiro.[/]"
+            )
+            raise typer.Exit(code=1)
+        console.print(json_marks(rs) if formato == "json" else export_marks(rs))
+
+    _run(main())
+
+
+@app.command("overlay-teste")
+def overlay_teste(
+    segundos: Annotated[float, typer.Option("--segundos", "-s")] = 15.0,
+) -> None:
+    """Mostra o overlay sobre a area de trabalho, sem precisar de replay.
+
+    Responde em quinze segundos a pergunta que, de outra forma, so apareceria
+    no meio da revisao: isso funciona nesta maquina? Nao toca no client do
+    League em momento nenhum.
+    """
+    from riftcoach.overlay.run import demonstrar
+
+    console.print("[dim]Olhe para a tela. Deve aparecer uma faixa no topo e cartoes.[/]")
+    res = _run_resultado(
+        demonstrar(segundos=segundos, log=lambda m: console.print(f"  [dim]{m}[/]"))
+    )
+    if res is not None and res.quadros:
+        console.print(f"[green]{res.quadros} quadros desenhados.[/] {res.motivo}")
 
 
 if __name__ == "__main__":

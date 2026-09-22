@@ -82,8 +82,14 @@ RiftCoach **never runs during a live game.** It is architecturally incapable of 
   `GET https://127.0.0.1:2999/replay/playback` before **every single request**. That endpoint exists
   only while a replay is playing. If it returns 404 — which is what happens during a live game —
   RiftCoach refuses to continue and tells you why.
-- There is no overlay, no alert, no automation, no input simulation, no memory reading.
+- There is no live alert, no automation, no input simulation, no memory reading.
 - Everything else uses the official Match-v5 API on games that are already over.
+
+**What about the overlay?** It draws on top of a **replay**, never a live game — and not out of
+discipline but because there is no path: it does not know about port 2999, it asks the same
+`ReplayGuard` for everything, and in a live game the guard refuses before the first request. It is
+a coach drawing over Sunday's tape, and Riot publishes the Replay API for exactly that. Full
+reasoning in [COMPLIANCE.md](COMPLIANCE.en.md#the-replay-overlay).
 
 Riot documents and permits both the Live Client Data API and the Replay API. What they prohibit is
 software that automates gameplay or reveals information you couldn't otherwise have. RiftCoach does

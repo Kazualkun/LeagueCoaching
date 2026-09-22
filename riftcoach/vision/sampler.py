@@ -154,9 +154,7 @@ def extract_at(
             # backward=True: pousa no keyframe ANTERIOR, de onde da para
             # decodificar para a frente ate o alvo. Sem isso, um seek para um
             # quadro que nao e keyframe devolve lixo.
-            container.seek(
-                _to_stream_ts(alvo, tb), stream=stream, backward=True, any_frame=False
-            )
+            container.seek(_to_stream_ts(alvo, tb), stream=stream, backward=True, any_frame=False)
             quadro = _decode_forward_to(container, stream, alvo, tb)
             if quadro is None:
                 continue
@@ -215,9 +213,7 @@ def moment_timestamps(
     return [base + d for d in offsets]
 
 
-def iter_calibration_points(
-    info: VideoInfo, n: int = 20
-) -> Iterator[float]:
+def iter_calibration_points(info: VideoInfo, n: int = 20) -> Iterator[float]:
     """Instantes espalhados pelo video, para calibrar o relogio por OCR.
 
     Evita os extremos: comeco costuma ter tela de carregamento e fim costuma

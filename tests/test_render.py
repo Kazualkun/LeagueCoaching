@@ -33,9 +33,7 @@ def remake_facts() -> MatchFacts:
 
 class FakeResolver:
     def item(self, item_id: int) -> str:
-        return {3076: "Placa Espinhosa", 3009: "Botas de Rapidez"}.get(
-            item_id, f"item{item_id}"
-        )
+        return {3076: "Placa Espinhosa", 3009: "Botas de Rapidez"}.get(item_id, f"item{item_id}")
 
     def rune(self, perk_id: int) -> str:
         return f"runa{perk_id}"

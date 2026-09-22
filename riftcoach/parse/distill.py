@@ -77,9 +77,7 @@ class _Timeline:
     def __init__(self, timeline: dict[str, Any]) -> None:
         info = timeline["info"]
         self.frames: list[dict[str, Any]] = info["frames"]
-        self.events: list[dict[str, Any]] = [
-            e for f in self.frames for e in f["events"]
-        ]
+        self.events: list[dict[str, Any]] = [e for f in self.frames for e in f["events"]]
         self.events.sort(key=lambda e: e["timestamp"])
 
     def of_type(self, *types: str) -> list[dict[str, Any]]:
@@ -92,19 +90,14 @@ class _Timeline:
         return self.frames[idx]
 
     def pframe(self, t_ms: int, pid: int) -> dict[str, Any] | None:
-        pf: dict[str, Any] | None = self.frame_at(t_ms)["participantFrames"].get(
-            str(pid)
-        )
+        pf: dict[str, Any] | None = self.frame_at(t_ms)["participantFrames"].get(str(pid))
         return pf
 
     def pframe_exact(self, frame_idx: int, pid: int) -> dict[str, Any] | None:
         if not 0 <= frame_idx < len(self.frames):
             return None
-        pf: dict[str, Any] | None = self.frames[frame_idx]["participantFrames"].get(
-            str(pid)
-        )
+        pf: dict[str, Any] | None = self.frames[frame_idx]["participantFrames"].get(str(pid))
         return pf
-
 
 
 def _team_diff(
@@ -245,9 +238,7 @@ def _objective_window(t_ms: int, objectives: list[dict[str, Any]]) -> str | None
     return None
 
 
-def distill(
-    match: dict[str, Any], timeline: dict[str, Any], puuid: str
-) -> MatchFacts:
+def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> MatchFacts:
     """Transforma match-v5 + timeline em MatchFacts para um jogador."""
     info = match["info"]
 
@@ -263,9 +254,7 @@ def distill(
     participants: list[dict[str, Any]] = info["participants"]
     focus_raw = next((p for p in participants if p["puuid"] == puuid), None)
     if focus_raw is None:
-        raise PlayerNotInMatch(
-            f"puuid nao participou de {match['metadata']['matchId']}."
-        )
+        raise PlayerNotInMatch(f"puuid nao participou de {match['metadata']['matchId']}.")
 
     tl = _Timeline(timeline)
     fid = focus_raw["participantId"]
@@ -285,9 +274,7 @@ def distill(
     for idx, frame in enumerate(tl.frames):
         pf_all = frame["participantFrames"]
 
-        gold_diff_series.append(
-            _round_to(_team_diff(pf_all, by_pid, team_id, "totalGold"), 50)
-        )
+        gold_diff_series.append(_round_to(_team_diff(pf_all, by_pid, team_id, "totalGold"), 50))
         xp_diff_series.append(_round_to(_team_diff(pf_all, by_pid, team_id, "xp"), 50))
 
         # Por minuto ate 18, depois a cada 3: decisoes de rota sao de escala de
@@ -306,9 +293,7 @@ def distill(
         lane_series.append(
             LaneSnapshot(
                 minute=idx,
-                gd=_round_to(a.get("totalGold", 0) - b.get("totalGold", 0), 25)
-                if b
-                else 0,
+                gd=_round_to(a.get("totalGold", 0) - b.get("totalGold", 0), 25) if b else 0,
                 xpd=_round_to(a.get("xp", 0) - b.get("xp", 0), 50) if b else 0,
                 csd=(
                     a.get("minionsKilled", 0)
@@ -344,9 +329,7 @@ def distill(
         t_ms = e["timestamp"]
         killer = _valid_pid(e.get("killerId"))
         victim = _valid_pid(e.get("victimId"))
-        assists = [
-            p for p in (_valid_pid(a) for a in e.get("assistingParticipantIds", [])) if p
-        ]
+        assists = [p for p in (_valid_pid(a) for a in e.get("assistingParticipantIds", [])) if p]
         pos = e.get("position", {})
         zone = (
             side_relative(to_zone(pos["x"], pos["y"]), team_id)
@@ -387,9 +370,7 @@ def distill(
                     wave_proxy=_wave_proxy(tl, fid, t_ms, team_id),
                     gold_at_death=pf.get("currentGold", 0) if pf else 0,
                     level_diff_vs_opponent=(
-                        (pf.get("level", 0) - opp_pf.get("level", 0))
-                        if pf and opp_pf
-                        else 0
+                        (pf.get("level", 0) - opp_pf.get("level", 0)) if pf and opp_pf else 0
                     ),
                 )
             )
@@ -400,9 +381,7 @@ def distill(
                     t_ms=t_ms,
                     t=mmss(t_ms),
                     zone=zone,
-                    victim=by_pid[victim].get("championName", "?")
-                    if victim in by_pid
-                    else "?",
+                    victim=by_pid[victim].get("championName", "?") if victim in by_pid else "?",
                     assisted=killer != fid,
                     gold_swing=swing,
                 )
@@ -436,9 +415,7 @@ def distill(
 
     # ---- objetivos -----------------------------------------------------
     ward_times = [
-        e["timestamp"]
-        for e in tl.of_type("WARD_PLACED")
-        if _valid_pid(e.get("creatorId")) == fid
+        e["timestamp"] for e in tl.of_type("WARD_PLACED") if _valid_pid(e.get("creatorId")) == fid
     ]
     objectives: list[ObjectiveEvent] = []
     # (instante, x, y) — precisamos da posicao para julgar disputa de verdade.
@@ -458,6 +435,7 @@ def distill(
             if dx * dx + dy * dy <= CONTESTED_UNITS**2:
                 return True
         return False
+
     for e in tl.of_type("ELITE_MONSTER_KILL", "BUILDING_KILL"):
         t_ms = e["timestamp"]
         pos = e.get("position", {})
@@ -493,9 +471,7 @@ def distill(
                     else None
                 ),
                 focus_player_zone=(
-                    side_relative(
-                        to_zone(pf["position"]["x"], pf["position"]["y"]), team_id
-                    )
+                    side_relative(to_zone(pf["position"]["x"], pf["position"]["y"]), team_id)
                     if pf and "position" in pf
                     else "?"
                 ),
@@ -504,9 +480,7 @@ def distill(
                 ]
                 if gold_diff_series
                 else 0,
-                wards_placed_60s_before=sum(
-                    1 for w in ward_times if 0 <= t_ms - w <= 60_000
-                ),
+                wards_placed_60s_before=sum(1 for w in ward_times if 0 <= t_ms - w <= 60_000),
             )
         )
 
@@ -542,9 +516,7 @@ def distill(
         enemy=[_summary(p) for p in participants if p["teamId"] != team_id],
         cs_at_10=cs_at(10, fid) or 0,
         cs_at_14=cs_at(14, fid) or 0,
-        csd_at_10=(
-            (cs_at(10, fid) or 0) - (cs_at(10, oid) or 0) if oid is not None else None
-        ),
+        csd_at_10=((cs_at(10, fid) or 0) - (cs_at(10, oid) or 0) if oid is not None else None),
         gd_at_10=diff_at(10, "totalGold"),
         gd_at_14=diff_at(14, "totalGold"),
         xpd_at_10=diff_at(10, "xp"),
@@ -668,11 +640,7 @@ def _detect_recalls(
         # descartar: 'voltou porque morreu' tambem e informacao de tempo.
         forced = any(0 <= t_ms - d <= 25_000 for d in death_times)
         pf = tl.pframe(t_ms, fid)
-        bought = [
-            item
-            for t, item in purchases
-            if t_ms <= t <= t_ms + SHOP_CLUSTER_GAP_MS
-        ]
+        bought = [item for t, item in purchases if t_ms <= t <= t_ms + SHOP_CLUSTER_GAP_MS]
         back_at: float | None = None
         start = round(t_ms / FRAME_MS)
         for j in range(start + 1, min(start + 4, len(tl.frames))):

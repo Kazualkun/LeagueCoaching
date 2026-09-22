@@ -403,9 +403,7 @@ async def test_a_failing_provider_fails_over_to_the_next() -> None:
 async def test_a_bad_key_burns_the_provider_instead_of_retrying() -> None:
     """401 nao melhora com retentativa. Sem o descarte, o roteador gastaria a
     sessao inteira batendo na mesma porta."""
-    sem_chave = FakeProvider(
-        _profile("groq"), [ProviderCallError("401", kind="fatal", status=401)]
-    )
+    sem_chave = FakeProvider(_profile("groq"), [ProviderCallError("401", kind="fatal", status=401)])
     bom = FakeProvider(_profile("gemini", speed=1.0), ["ok"])
     r = _router(sem_chave, bom)
 
@@ -658,9 +656,7 @@ def test_openrouter_picks_any_free_model() -> None:
 @pytest.mark.asyncio
 async def test_the_client_lists_models(cfg) -> None:  # type: ignore[no-untyped-def]
     respx.get("https://api.groq.com/openai/v1/models").mock(
-        return_value=httpx.Response(
-            200, json={"data": [{"id": "a"}, {"id": "b"}]}
-        )
+        return_value=httpx.Response(200, json={"data": [{"id": "a"}, {"id": "b"}]})
     )
     async with OpenAICompatProvider(cfg, "m", api_key="k") as p:
         assert await p.list_models() == ["a", "b"]
@@ -689,9 +685,7 @@ def test_yaml_override_merges_instead_of_replacing(tmp_path) -> None:  # type: i
     url e cota junto — e se precisasse, redeclararia errado."""
     pytest.importorskip("yaml")
     p = tmp_path / "providers.yaml"
-    p.write_text(
-        "providers:\n  - name: groq\n    text_model: modelo-novo\n", encoding="utf-8"
-    )
+    p.write_text("providers:\n  - name: groq\n    text_model: modelo-novo\n", encoding="utf-8")
     groq = next(c for c in load_providers(p) if c.name == "groq")
     padrao = next(c for c in default_providers() if c.name == "groq")
     assert groq.text_model == "modelo-novo"
@@ -733,9 +727,7 @@ def _saida(**kw: object) -> AnalystOutput:
         "timestamp_ms": 600_000,
         "claim": "voce perdeu a wave",
         "evidence": [
-            AnalystEvidence(
-                tier="T1", timestamp_ms=600_000, statement="cs@10 = 40", assumption=""
-            )
+            AnalystEvidence(tier="T1", timestamp_ms=600_000, statement="cs@10 = 40", assumption="")
         ],
         "fix": "farme a wave antes de rotacionar",
     }
@@ -839,9 +831,7 @@ def test_model_findings_are_less_confident_than_measured_ones() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "nome", ["_system", "laning", "macro", "economy", "fights", "head_coach"]
-)
+@pytest.mark.parametrize("nome", ["_system", "laning", "macro", "economy", "fights", "head_coach"])
 def test_every_prompt_exists_and_is_substantial(nome: str) -> None:
     texto = load_prompt(nome)
     assert len(texto) > 500, "prompt curto demais para orientar um modelo pequeno"

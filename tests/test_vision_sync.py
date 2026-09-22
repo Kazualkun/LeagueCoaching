@@ -45,12 +45,12 @@ def test_parses_a_clean_clock(texto: str, esperado: int) -> None:
 @pytest.mark.parametrize(
     ("texto", "esperado"),
     [
-        ("I4:22", 862),   # I lido no lugar de 1
-        ("14:2O", 860),   # O lido no lugar de 0
-        ("l4:22", 862),   # L minusculo
-        ("14.22", 862),   # ponto no lugar de dois-pontos
-        ("14 : 22", 862), # espacos sobrando
-        ("S:30", 330),    # S lido no lugar de 5
+        ("I4:22", 862),  # I lido no lugar de 1
+        ("14:2O", 860),  # O lido no lugar de 0
+        ("l4:22", 862),  # L minusculo
+        ("14.22", 862),  # ponto no lugar de dois-pontos
+        ("14 : 22", 862),  # espacos sobrando
+        ("S:30", 330),  # S lido no lugar de 5
     ],
 )
 def test_recovers_from_common_ocr_confusions(texto: str, esperado: int) -> None:
@@ -108,9 +108,7 @@ def test_rejects_impossible_seconds(texto: str) -> None:
     assert parse_clock(texto) is None
 
 
-@pytest.mark.parametrize(
-    "texto", ["", "   ", "abc", "Nexo", "1234567", "120:00", ":::", "12:"]
-)
+@pytest.mark.parametrize("texto", ["", "   ", "abc", "Nexo", "1234567", "120:00", ":::", "12:"])
 def test_rejects_garbage(texto: str) -> None:
     assert parse_clock(texto) is None
 
@@ -188,9 +186,7 @@ def test_several_outliers_still_recover() -> None:
 def test_small_jitter_is_tolerated() -> None:
     """O relogio mostra segundos inteiros e o video tem taxa de quadros
     propria — pequena variacao e esperada, nao erro."""
-    amostras = [
-        (60 + i * 60 + 20.0 + (0.4 if i % 2 else -0.4), 60 + i * 60) for i in range(20)
-    ]
+    amostras = [(60 + i * 60 + 20.0 + (0.4 if i % 2 else -0.4), 60 + i * 60) for i in range(20)]
     cal = fit(amostras)  # type: ignore[arg-type]
     assert cal.offset_s == pytest.approx(20.0, abs=0.5)
     assert cal.inliers == 20

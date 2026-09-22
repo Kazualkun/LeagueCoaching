@@ -43,7 +43,7 @@ _ENTRY_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_]+)\s*=\s*(?P<value>.*?)\s*$")
 
 def find_game_cfg() -> Path | None:
     """Localiza o game.cfg. `RIFTCOACH_GAME_CFG` tem precedencia."""
-    if (override := os.environ.get("RIFTCOACH_GAME_CFG")):
+    if override := os.environ.get("RIFTCOACH_GAME_CFG"):
         caminho = Path(override)
         return caminho if caminho.exists() else None
     for c in _CANDIDATES:

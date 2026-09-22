@@ -72,8 +72,7 @@ class Evidence(BaseModel):
         sistema de niveis existe para impedir."""
         if self.tier is not EvidenceTier.T1_MEASURED and not self.assumption:
             raise ValueError(
-                f"evidencia {self.tier.value} exige 'assumption' declarada: "
-                f"{self.statement!r}"
+                f"evidencia {self.tier.value} exige 'assumption' declarada: {self.statement!r}"
             )
         return self
 

@@ -149,9 +149,7 @@ class ReplayController:
         cal = await self.ensure_calibrated()
         alvo = max(0.0, cal.to_replay_s(timeline_ms) - lead_in_s)
 
-        await self.guard.post(
-            "/replay/playback", {"time": alvo, "paused": False, "speed": 1.0}
-        )
+        await self.guard.post("/replay/playback", {"time": alvo, "paused": False, "speed": 1.0})
         return alvo
 
     async def focus_camera(self, champion: str | None = None) -> None:

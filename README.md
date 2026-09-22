@@ -35,25 +35,67 @@ você recebe algo assim:
 Clique no botão e o seu client do League pula o replay para 14:14 — oito segundos *antes* da morte,
 porque o erro é a decisão, não a consequência.
 
-### Três formas de usar
+### As marcações aparecem dentro do replay
+
+Abra o replay no client do League e o RiftCoach desenha por cima dele — sincronizado com o relógio
+do próprio replay.
+
+![O cartão do erro, alguns segundos antes de ele acontecer](docs/img/overlay-cartao-critico.jpg)
+
+O cartão entra **antes** do erro, com uma barrinha contando os segundos que faltam. Essa é a decisão
+de design mais importante do overlay: se ele só aparecesse no instante marcado, você leria o
+diagnóstico depois de já ter visto o desfecho — a resposta antes da pergunta. Aparecendo antes, você
+lê, olha, e vê acontecer.
+
+Na faixa do topo ficam todas as marcações da partida. Erro crítico é mais largo e vermelho; as suas
+anotações têm cor própria. No minimapa, um anel acompanha onde você estava.
+
+E você marca as suas, com a janela do jogo na frente:
+
+| Atalho | O que faz |
+|---|---|
+| `Ctrl+Alt+E` | marcar um erro seu |
+| `Ctrl+Alt+N` | uma anotação |
+| `Ctrl+Alt+G` | algo que você fez bem |
+| `Ctrl+Alt+Q` | uma dúvida para rever depois |
+| `Ctrl+Alt+S` | pular para a **próxima** marcação |
+| `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
+| `Ctrl+Alt+H` | esconder o overlay |
+
+**As suas marcações ficam salvas.** Ao reabrir a mesma partida, elas voltam junto com as da IA — e é
+comparando as duas que se aprende mais: onde a IA marcou crítico e você não sentiu nada é ponto
+cego; onde você sentiu que errou e a medição não viu costuma ser troca de dano, combo ou
+posicionamento fino, coisas que a telemetria da Riot simplesmente não registra.
+
+### Quatro formas de usar
 
 | Modo | O que você precisa | O que você recebe |
 |---|---|---|
 | **Telemetria** | Um match ID | Análise completa. Sem GPU, sem replay, sem download. |
-| **Replay Sincronizado** | Match ID + `.rofl` + client do League | Tudo acima, mais revisão com clique-para-pular e análise de mapa/câmera. |
+| **Overlay no replay** | Match ID + client do League com o replay aberto | As marcações desenhadas por cima do jogo, no momento certo. |
+| **Replay Sincronizado** | Match ID + `.rofl` + client do League | Relatório no navegador com clique-para-pular. |
 | **VOD em vídeo** | Um arquivo de vídeo ou URL | Analise qualquer partida gravada, inclusive as que você não jogou. |
 
 ---
 
 ## Começando
 
-**Não sabe o que é terminal? Não precisa saber.**
+**Não sabe o que é terminal? Não precisa saber. Você não vai ver um.**
 
 1. [**Baixe o ZIP**](https://github.com/Kazualkun/LeagueCoaching/archive/refs/heads/main.zip) e extraia
 2. Dois cliques em **`RiftCoach.bat`**
 
-Ele instala tudo sozinho e abre um assistente que te guia em 4 passos, perguntando uma coisa de cada
-vez. Pode fechar no meio — ao reabrir, continua de onde parou.
+Na primeira vez ele baixa o que falta (leva cerca de um minuto, com o progresso na tela). Depois
+disso abre direto nesta janela:
+
+![A janela pedindo a chave da Riot](docs/img/janela-chave.png)
+
+Um passo de cada vez, sem jargão, sempre dizendo qual é o próximo. Pode fechar no meio — ao reabrir,
+continua de onde parou, sem repetir pergunta que você já respondeu.
+
+No fim, você escolhe como revisar:
+
+![A tela final, com as duas formas de revisar](docs/img/janela-pronto.png)
 
 <details>
 <summary><b>Prefere terminal?</b></summary>
@@ -62,9 +104,12 @@ vez. Pode fechar no meio — ao reabrir, continua de onde parou.
 git clone https://github.com/Kazualkun/LeagueCoaching.git
 cd LeagueCoaching
 
-uv run riftcoach start                       # o mesmo assistente
+uv run riftcoach gui                         # a mesma janela
+uv run riftcoach start                       # o assistente, em texto
 uv run riftcoach analyze "SeuNome#TAG"       # direto ao relatório
 uv run riftcoach web "SeuNome#TAG"           # no navegador
+uv run riftcoach overlay "SeuNome#TAG"       # marcações por cima do replay
+uv run riftcoach marcacoes BR1_123 --riot-id "SeuNome#TAG"   # exportar as marcações
 uv run riftcoach doctor                      # o que falta, e por quê
 ```
 
@@ -79,13 +124,17 @@ uv run riftcoach doctor     # o que está configurado, o que falta, e por quê
 uv run riftcoach models     # quais provedores de IA existem — e por que os outros não
 ```
 
-**Para o modo replay**, há um passo a mais: a Replay API do League vem **desligada de fábrica**.
+**Para o modo replay e o overlay**, há dois passos a mais, e nenhum dos dois é adivinhável:
 
 ```bash
 uv run riftcoach enable-replay-api    # adiciona EnableReplayApi=1 no game.cfg, com backup
 uv run riftcoach pin-cert             # fixa o certificado do client (com um replay aberto)
-uv run riftcoach web "SeuNome#TAG"    # relatório no navegador, com clique-para-pular
 ```
+
+1. **A Replay API do League vem desligada de fábrica.** O comando acima liga, com backup do arquivo.
+2. **O jogo precisa estar em "Sem bordas".** Em tela cheia exclusiva o Windows não deixa nada
+   aparecer por cima — não é limitação do RiftCoach, é de como o modo funciona. Troque em
+   Configurações → Vídeo → Modo de janela.
 
 **Onde a IA vai rodar** — o `models` detecta seu hardware e recomenda:
 
@@ -114,8 +163,14 @@ O RiftCoach **nunca roda durante uma partida ao vivo.** Ele é arquiteturalmente
   `GET https://127.0.0.1:2999/replay/playback` antes de **cada requisição**. Esse endpoint só existe
   enquanto um replay está rodando. Se ele retornar 404 — que é o que acontece durante uma partida ao
   vivo — o RiftCoach se recusa a continuar e explica o motivo.
-- Não existe overlay, alerta, automação, simulação de input nem leitura de memória.
+- Não existe alerta ao vivo, automação, simulação de input nem leitura de memória.
 - Todo o resto usa a API oficial Match-v5, em partidas que já acabaram.
+
+**E o overlay?** Ele desenha por cima do **replay**, nunca de uma partida ao vivo — e não por
+disciplina, mas porque não há caminho: ele não conhece a porta 2999, pede tudo ao mesmo
+`ReplayGuard`, e numa partida ao vivo o guard recusa antes da primeira requisição. É um treinador
+desenhando por cima do vídeo de domingo, e a Riot publica a Replay API exatamente para isso.
+Raciocínio inteiro em [COMPLIANCE.md](COMPLIANCE.md#o-overlay-sobre-o-replay).
 
 A Riot documenta e permite tanto a Live Client Data API quanto a Replay API. O que ela proíbe é
 software que automatiza a jogabilidade ou revela informação que você não teria de outra forma. O

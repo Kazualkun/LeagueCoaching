@@ -234,9 +234,7 @@ class ReplayGuard:
         forma certa. Essa assimetria e o ponto do modulo.
         """
         try:
-            resp = await self._client.get(
-                f"{BASE}/replay/playback", timeout=PROBE_TIMEOUT_S
-            )
+            resp = await self._client.get(f"{BASE}/replay/playback", timeout=PROBE_TIMEOUT_S)
         except httpx.ConnectError as e:
             # Client fechado, ou rodando sem a API local. Nao da para provar
             # que nao ha partida ao vivo, entao recusamos.
@@ -250,11 +248,8 @@ class ReplayGuard:
             # QUAL client nem O QUE fazer — e recusa que o usuario nao sabe
             # resolver e indistinguivel de bug.
             raise LiveGameRefused(
-                f"o client do League nao respondeu a tempo em {HOST}:{PORT}"
-                " (/replay/playback)",
-                hint=(
-                    "Resultado ambiguo e tratado como recusa. " + _HINT_REPLAY
-                ),
+                f"o client do League nao respondeu a tempo em {HOST}:{PORT} (/replay/playback)",
+                hint=("Resultado ambiguo e tratado como recusa. " + _HINT_REPLAY),
             ) from e
         except httpx.HTTPError as e:
             raise LiveGameRefused(
@@ -329,9 +324,7 @@ class ReplayGuard:
     async def _send(self, method: str, path: str, payload: dict[str, Any] | None) -> Any:
         url = f"{BASE}/{path.lstrip('/')}"
         try:
-            resp = await self._client.request(
-                method, url, json=payload, timeout=REQUEST_TIMEOUT_S
-            )
+            resp = await self._client.request(method, url, json=payload, timeout=REQUEST_TIMEOUT_S)
         except httpx.HTTPError as e:
             # Perder a conexao ENTRE a verificacao e a requisicao tambem e
             # ambiguo: o replay pode ter sido fechado nesse meio tempo.

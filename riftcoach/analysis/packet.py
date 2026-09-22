@@ -126,9 +126,7 @@ class EvidencePacket:
         a fatia certa de contexto.
         """
         blocos = [
-            facts_render.render(
-                self.facts, (facts_render.Section.HEADER,), self.resolver
-            ).strip(),
+            facts_render.render(self.facts, (facts_render.Section.HEADER,), self.resolver).strip(),
             self._measured_block(),
         ]
         for nome, achados in findings_por_analista.items():
@@ -144,9 +142,7 @@ class EvidencePacket:
         return "\n\n".join(b for b in blocos if b)
 
 
-def build_patch_notes(
-    facts: MatchFacts, resolver: facts_render.NameResolver | None
-) -> list[str]:
+def build_patch_notes(facts: MatchFacts, resolver: facts_render.NameResolver | None) -> list[str]:
     """Nome e custo dos itens que o jogador realmente comprou.
 
     Sem resolver, devolve vazio em vez de ids crus: uma linha dizendo

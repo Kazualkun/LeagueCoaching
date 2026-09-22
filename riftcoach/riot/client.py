@@ -127,9 +127,7 @@ class RiotClient:
                 retry_after = float(resp.headers.get("Retry-After", "10"))
                 self._limiter.penalize(retry_after)
                 if attempt == 2:
-                    raise RiotRateLimited(
-                        f"Limite de taxa persistente em {url}", retry_after
-                    )
+                    raise RiotRateLimited(f"Limite de taxa persistente em {url}", retry_after)
                 continue
 
             if resp.status_code in (500, 502, 503, 504):
@@ -240,9 +238,7 @@ class RiotClient:
         ver o que a Riot realmente manda. Nao cacheado: disponibilidade de replay
         expira com o tempo e com a troca de patch.
         """
-        return await self._get(
-            self._url(f"/lol/match/v5/matches/by-puuid/{puuid}/replays")
-        )
+        return await self._get(self._url(f"/lol/match/v5/matches/by-puuid/{puuid}/replays"))
 
     async def match(self, match_id: str) -> dict[str, Any]:
         """match-v5. Imutavel -> cache permanente."""
@@ -264,9 +260,7 @@ class RiotClient:
 
         NAO cacheado: o elo muda a cada partida.
         """
-        data = await self._get(
-            self._platform_url(f"/lol/league/v4/entries/by-puuid/{puuid}")
-        )
+        data = await self._get(self._platform_url(f"/lol/league/v4/entries/by-puuid/{puuid}"))
         return list(data)
 
     async def timeline(self, match_id: str) -> dict[str, Any]:

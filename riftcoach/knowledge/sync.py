@@ -201,9 +201,7 @@ class PatchDB:
         return ddv
 
     @staticmethod
-    async def _fetch(
-        client: httpx.AsyncClient, ddv: str, locale: str, file: str
-    ) -> Any:
+    async def _fetch(client: httpx.AsyncClient, ddv: str, locale: str, file: str) -> Any:
         r = await client.get(f"{DDRAGON}/cdn/{ddv}/data/{locale}/{file}")
         r.raise_for_status()
         return r.json()
@@ -212,9 +210,7 @@ class PatchDB:
         import sqlite3
 
         with sqlite3.connect(self.path) as db:
-            cur = db.execute(
-                "SELECT 1 FROM synced WHERE patch = ? AND locale = ?", (patch, locale)
-            )
+            cur = db.execute("SELECT 1 FROM synced WHERE patch = ? AND locale = ?", (patch, locale))
             return cur.fetchone() is not None
 
     def available_patches(self) -> list[str]:
@@ -260,9 +256,7 @@ class PatchDB:
         import sqlite3
 
         with sqlite3.connect(self.path) as db:
-            row = db.execute(
-                "SELECT 1 FROM synced WHERE patch = ? LIMIT 1", (patch,)
-            ).fetchone()
+            row = db.execute("SELECT 1 FROM synced WHERE patch = ? LIMIT 1", (patch,)).fetchone()
         return row is not None
 
     # ------------------------------------------------------------------
@@ -288,8 +282,7 @@ class PatchDB:
             row = None
             if self._patch:
                 row = db.execute(
-                    "SELECT name FROM entity WHERE patch=? AND locale=? AND kind=?"
-                    " AND entity_id=?",
+                    "SELECT name FROM entity WHERE patch=? AND locale=? AND kind=? AND entity_id=?",
                     (self._patch, self._locale, kind, entity_id),
                 ).fetchone()
             if row is None:

@@ -153,7 +153,7 @@ def test_an_out_of_range_finding_is_a_404(client: Any) -> None:
 
 
 def test_replay_status_reports_absence_as_data_not_error(client: Any) -> None:
-    """"Nao ha replay rodando" e o estado NORMAL. Transformar isso em 4xx
+    """ "Nao ha replay rodando" e o estado NORMAL. Transformar isso em 4xx
     faria a UI piscar erro o tempo todo."""
     r = client.get("/api/replay/status")
     assert r.status_code == 200
@@ -172,9 +172,7 @@ def test_replay_status_reports_absence_as_data_not_error(client: Any) -> None:
     ids=["conexao-recusada", "leitura-expirou", "conexao-expirou"],
 )
 @respx.mock
-def test_a_refused_seek_is_409_with_an_explanation(
-    client: Any, falha: Exception
-) -> None:
+def test_a_refused_seek_is_409_with_an_explanation(client: Any, falha: Exception) -> None:
     """409 e nao 500: nao ha replay rodando, e essa e uma condicao esperada que
     o usuario resolve abrindo um. A mensagem do guard vai junto.
 
@@ -242,9 +240,7 @@ def test_the_page_needs_no_build_step() -> None:
     assert arquivos == ["index.html"], f"static/ ganhou arquivos: {arquivos}"
 
 
-def test_open_guard_failure_is_409_not_500(
-    client: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_open_guard_failure_is_409_not_500(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regressao achada rodando a UI de verdade contra o client.
 
     A rota chamava `open_guard` FORA do try. Enquanto ele so montava o cliente

@@ -102,9 +102,7 @@ def _run(cmd: list[str]) -> str:
     existe mais no Windows 11 nao e.
     """
     try:
-        out = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10, check=False
-        )
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False)
         return out.stdout or ""
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -113,9 +111,7 @@ def _run(cmd: list[str]) -> str:
 def _probe_nvidia() -> tuple[str, float] | None:
     """nvidia-smi em vez de pynvml: ja vem com o driver, entao nao adiciona
     dependencia e funciona igual nos tres sistemas."""
-    saida = _run(
-        ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]
-    )
+    saida = _run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
     for linha in saida.splitlines():
         partes = [p.strip() for p in linha.split(",")]
         if len(partes) == 2 and partes[1].replace(".", "").isdigit():

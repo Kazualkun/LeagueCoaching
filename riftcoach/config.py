@@ -49,9 +49,7 @@ def data_dir() -> Path:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     riot_api_key: str | None = None
     riot_platform: str = Field(default="br1", description="br1, na1, euw1, kr, ...")
@@ -156,9 +154,7 @@ def save_pref(key: str, value: str) -> None:
 
     prefs = load_prefs()
     prefs[key] = value
-    _prefs_path().write_text(
-        json.dumps(prefs, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    _prefs_path().write_text(json.dumps(prefs, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 settings = Settings()

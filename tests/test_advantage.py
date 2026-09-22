@@ -92,9 +92,7 @@ def test_evaluation_is_explainable(loser: MatchFacts) -> None:
     assert "wp=" in e.explain()
 
 
-def test_evaluation_is_zero_sum_between_teams(
-    loser: MatchFacts, winner: MatchFacts
-) -> None:
+def test_evaluation_is_zero_sum_between_teams(loser: MatchFacts, winner: MatchFacts) -> None:
     """A vantagem de um time e o negativo da do outro. Se nao for, algum termo
     esta sendo contado do mesmo lado para os dois."""
     for minuto in (5, 10, 20, 30):

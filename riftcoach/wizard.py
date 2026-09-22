@@ -73,7 +73,7 @@ def _pedir_chave() -> str | None:
     if typer.confirm("  Abrir o site agora no navegador?", default=True):
         webbrowser.open(PORTAL)
 
-    chave = typer.prompt("  Cole a chave aqui", hide_input=True).strip()
+    chave = str(typer.prompt("  Cole a chave aqui", hide_input=True)).strip()
     if not chave:
         return None
     if not chave.startswith("RGAPI-"):
@@ -106,8 +106,7 @@ def passo_chave() -> bool:
             return True
         console.print(f"  [yellow]A chave guardada parou de funcionar:[/] {motivo}")
         console.print(
-            "  [dim]Chaves de desenvolvimento expiram a cada 24h. "
-            "Vamos pegar uma nova.[/]"
+            "  [dim]Chaves de desenvolvimento expiram a cada 24h. Vamos pegar uma nova.[/]"
         )
 
     for tentativa in range(3):
@@ -155,7 +154,7 @@ def passo_riot_id() -> str | None:
             border_style="cyan",
         )
     )
-    riot_id = typer.prompt("  Seu Riot ID (exemplo: Fulano#BR1)").strip()
+    riot_id = str(typer.prompt("  Seu Riot ID (exemplo: Fulano#BR1)")).strip()
     if "#" not in riot_id:
         _erro(
             "faltou o # no meio",
@@ -163,9 +162,11 @@ def passo_riot_id() -> str | None:
         )
         return None
 
-    plataforma = typer.prompt(
-        "  Sua regiao", default=prefs.get("platform", settings.riot_platform)
-    ).strip().lower()
+    plataforma = (
+        typer.prompt("  Sua regiao", default=prefs.get("platform", settings.riot_platform))
+        .strip()
+        .lower()
+    )
 
     save_pref("riot_id", riot_id)
     save_pref("platform", plataforma)

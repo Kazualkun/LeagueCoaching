@@ -259,10 +259,7 @@ def find_blunders(facts: MatchFacts, window_ms: int = 45_000) -> list[Blunder]:
 
     for d in facts.deaths:
         antes, depois = par(d.t_ms)
-        detalhe = (
-            f"morreu em {d.zone} para {'+'.join(d.killers) or '?'}"
-            f" (swing {d.gold_swing}g)"
-        )
+        detalhe = f"morreu em {d.zone} para {'+'.join(d.killers) or '?'} (swing {d.gold_swing}g)"
         if d.objective_window:
             detalhe += f", com {d.objective_window}"
         if d.gold_at_death >= 1000:

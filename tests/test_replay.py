@@ -263,9 +263,7 @@ def _code_constants(arquivo: Path) -> list[object]:
     arvore = ast.parse(arquivo.read_text(encoding="utf-8"))
     docstrings: set[int] = set()
     for no in ast.walk(arvore):
-        if isinstance(
-            no, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
-        ):
+        if isinstance(no, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             corpo = getattr(no, "body", [])
             if (
                 corpo
@@ -275,9 +273,7 @@ def _code_constants(arquivo: Path) -> list[object]:
             ):
                 docstrings.add(id(corpo[0].value))
     return [
-        n.value
-        for n in ast.walk(arvore)
-        if isinstance(n, ast.Constant) and id(n) not in docstrings
+        n.value for n in ast.walk(arvore) if isinstance(n, ast.Constant) and id(n) not in docstrings
     ]
 
 
@@ -335,8 +331,7 @@ def test_no_module_outside_replay_talks_to_the_client() -> None:
                 break
 
     assert not ofensores, (
-        "modulos fora de riftcoach/replay/ referenciam a porta 2999: "
-        + ", ".join(ofensores)
+        "modulos fora de riftcoach/replay/ referenciam a porta 2999: " + ", ".join(ofensores)
     )
 
 
@@ -608,9 +603,12 @@ async def test_calibration_refuses_an_unsettled_replay() -> None:
     """
     from riftcoach.replay.controller import ReplayController
 
-    ctrl = ReplayController(settle_interval_s=0.0, guard=_RelogiosFalsos(  # type: ignore[arg-type]
-        [(295.0, 264.0), (297.0, 290.0), (299.0, 299.0)]
-    ))
+    ctrl = ReplayController(
+        settle_interval_s=0.0,
+        guard=_RelogiosFalsos(  # type: ignore[arg-type]
+            [(295.0, 264.0), (297.0, 290.0), (299.0, 299.0)]
+        ),
+    )
     with pytest.raises(LiveGameRefused, match="assentaram"):
         await ctrl.calibrate()
 
@@ -621,9 +619,12 @@ async def test_calibration_accepts_a_settled_replay() -> None:
     exatamente o que o client mostrou a partir de t+4s."""
     from riftcoach.replay.controller import ReplayController
 
-    ctrl = ReplayController(settle_interval_s=0.0, guard=_RelogiosFalsos(  # type: ignore[arg-type]
-        [(604.4, 604.5), (606.5, 606.6), (608.6, 608.7)]
-    ))
+    ctrl = ReplayController(
+        settle_interval_s=0.0,
+        guard=_RelogiosFalsos(  # type: ignore[arg-type]
+            [(604.4, 604.5), (606.5, 606.6), (608.6, 608.7)]
+        ),
+    )
     cal = await ctrl.calibrate()
     assert cal.offset_s == pytest.approx(-0.1, abs=0.05)
 
@@ -633,8 +634,11 @@ async def test_calibration_uses_the_median_not_the_last_reading() -> None:
     """Uma amostra fora do lugar dentro da tolerancia nao deve puxar o offset."""
     from riftcoach.replay.controller import ReplayController
 
-    ctrl = ReplayController(settle_interval_s=0.0, guard=_RelogiosFalsos(  # type: ignore[arg-type]
-        [(600.0, 600.0), (602.0, 600.5), (604.0, 604.0)]
-    ))
+    ctrl = ReplayController(
+        settle_interval_s=0.0,
+        guard=_RelogiosFalsos(  # type: ignore[arg-type]
+            [(600.0, 600.0), (602.0, 600.5), (604.0, 604.0)]
+        ),
+    )
     cal = await ctrl.calibrate()
     assert cal.offset_s == pytest.approx(0.0, abs=0.01)

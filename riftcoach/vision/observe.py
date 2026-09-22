@@ -173,9 +173,7 @@ class ObservationSet:
             self.observations.append(obs)
 
     def near(self, timeline_ms: int, window_ms: int = 5_000) -> list[FrameObservation]:
-        return [
-            o for o in self.observations if abs(o.timeline_ms - timeline_ms) <= window_ms
-        ]
+        return [o for o in self.observations if abs(o.timeline_ms - timeline_ms) <= window_ms]
 
     def evidence_for(self, timeline_ms: int, window_ms: int = 5_000) -> list[Evidence]:
         out: list[Evidence] = []

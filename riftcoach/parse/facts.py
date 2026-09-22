@@ -19,9 +19,7 @@ from pydantic import BaseModel, Field
 # consiga explicar por que o relatorio de ontem difere do de hoje.
 PARSER_VERSION = 1
 
-WaveProxy = Literal[
-    "PUSHING_TO_ENEMY", "HOLDING_MID", "HELD_IN_OWN_HALF", "NOT_IN_LANE", "UNKNOWN"
-]
+WaveProxy = Literal["PUSHING_TO_ENEMY", "HOLDING_MID", "HELD_IN_OWN_HALF", "NOT_IN_LANE", "UNKNOWN"]
 
 
 class PlayerSummary(BaseModel):

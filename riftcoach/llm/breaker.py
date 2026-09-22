@@ -119,9 +119,7 @@ class ProviderBreaker:
             e.backoff_s = min(e.backoff_s * 2, BACKOFF_MAX_S)
         e.state = BreakerState.OPEN
         e.open_until = self._clock() + e.backoff_s
-        e.last_reason = (
-            f"falha transitoria ({detail or 'sem detalhe'}); recuo {e.backoff_s:.0f}s"
-        )
+        e.last_reason = f"falha transitoria ({detail or 'sem detalhe'}); recuo {e.backoff_s:.0f}s"
 
     def record_schema_violation(self, provider: str, detail: str = "") -> None:
         """O modelo devolveu algo que nao valida contra o nosso schema."""

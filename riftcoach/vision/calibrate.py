@@ -51,7 +51,7 @@ class CalibrationError(RiftCoachError):
 class Calibration:
     """O mapeamento entre o relogio do video e o da partida.
 
-        video_s = timeline_s + offset_s
+    video_s = timeline_s + offset_s
     """
 
     offset_s: float
@@ -121,11 +121,13 @@ def fit(samples: list[tuple[float, int | None]]) -> Calibration:
     mediana = statistics.median(offsets)
 
     inliers = [
-        (v, g) for (v, g), o in zip(validos, offsets, strict=True)
+        (v, g)
+        for (v, g), o in zip(validos, offsets, strict=True)
         if abs(o - mediana) <= INLIER_TOLERANCE_S
     ]
     rejeitados = [
-        (v, g) for (v, g), o in zip(validos, offsets, strict=True)
+        (v, g)
+        for (v, g), o in zip(validos, offsets, strict=True)
         if abs(o - mediana) > INLIER_TOLERANCE_S
     ]
 

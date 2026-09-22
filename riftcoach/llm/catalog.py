@@ -141,9 +141,7 @@ def default_providers() -> list[ProviderConfig]:
             # Sem JSON_SCHEMA: o Groq oferece `json_object`, que promete "algum
             # JSON" e nao o NOSSO JSON. A diferenca decide se o roteador confia
             # na saida ou entra no loop de validar-e-reparar.
-            caps=frozenset(
-                {Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}
-            ),
+            caps=frozenset({Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}),
             ctx_tokens=32_768,
             api_key_name="groq",
             text_model="openai/gpt-oss-120b",
@@ -163,9 +161,7 @@ def default_providers() -> list[ProviderConfig]:
             # UE, entao atende paises onde o Google AI Studio nao abre. Um
             # usuario sem alternativa cai no relatorio sem IA — que funciona,
             # mas e menos do que ele poderia ter.
-            caps=frozenset(
-                {Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}
-            ),
+            caps=frozenset({Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}),
             ctx_tokens=32_768,
             api_key_name="mistral",
             text_model="",
@@ -178,9 +174,7 @@ def default_providers() -> list[ProviderConfig]:
             base_url="https://openrouter.ai/api/v1",
             cost_class="free_cloud",
             privacy="leaves_machine",
-            caps=frozenset(
-                {Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}
-            ),
+            caps=frozenset({Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}),
             ctx_tokens=32_768,
             api_key_name="openrouter",
             text_model="",
@@ -281,9 +275,7 @@ def text_model_for(cfg: ProviderConfig, tier: Tier) -> str:
     return cfg.text_model
 
 
-def resolve_text_model(
-    cfg: ProviderConfig, tier: Tier, available: list[str]
-) -> tuple[str, str]:
+def resolve_text_model(cfg: ProviderConfig, tier: Tier, available: list[str]) -> tuple[str, str]:
     """Escolhe o modelo contra o que o provedor REALMENTE oferece.
 
     Devolve (id escolhido, nota). A nota e vazia quando a preferencia valeu, e

@@ -269,8 +269,7 @@ def _vision(f: MatchFacts) -> list[str]:
         f"wards={v.wards_placed} destruidas={v.wards_killed} "
         f"controle_compradas={v.control_wards_bought}",
         f"wards por bloco de 5min: {' '.join(str(b) for b in v.by_5min_bucket)}",
-        "NOTA: a telemetria da Riot nao informa ONDE uma ward foi colocada — "
-        "so quantas e quando.",
+        "NOTA: a telemetria da Riot nao informa ONDE uma ward foi colocada — so quantas e quando.",
     ]
 
 

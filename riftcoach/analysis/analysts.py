@@ -82,9 +82,7 @@ class AnalystEvidence(BaseModel):
     tier: Literal["T1", "T2", "T3"]
     timestamp_ms: int = Field(ge=0)
     statement: str = Field(min_length=1)
-    assumption: str = Field(
-        description="A premissa assumida. Deixe string vazia se tier for T1."
-    )
+    assumption: str = Field(description="A premissa assumida. Deixe string vazia se tier for T1.")
 
 
 class AnalystFinding(BaseModel):
@@ -159,9 +157,7 @@ class ConversionResult:
     entities: dict[int, list[str]] = field(default_factory=dict)
 
 
-def to_findings(
-    saida: AnalystOutput, duration_ms: int, source_label: str
-) -> ConversionResult:
+def to_findings(saida: AnalystOutput, duration_ms: int, source_label: str) -> ConversionResult:
     """Converte a saida do modelo em `Finding`, descartando o que nao se sustenta.
 
     Descartar o finding e NAO a resposta inteira: um analista que produziu dois
@@ -175,9 +171,7 @@ def to_findings(
             # BAD_ANCHOR: um finding fora da partida nao pode ser clicado nem
             # conferido no replay, entao ele nao e utilizavel mesmo que o texto
             # esteja certo.
-            out.rejected.append(
-                f"{source_label}: timestamp {f.timestamp_ms} fora da partida"
-            )
+            out.rejected.append(f"{source_label}: timestamp {f.timestamp_ms} fora da partida")
             continue
 
         evidencias: list[Evidence] = []

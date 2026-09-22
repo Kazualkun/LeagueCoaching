@@ -4,7 +4,7 @@
 > Para a arquitetura técnica, veja [ARCHITECTURE.md](ARCHITECTURE.md).
 >
 > **Este manual descreve o que existe hoje.** O que está planejado e ainda não funciona aparece
-> marcado como tal (seção 6.3) — manual que promete função inexistente faz perder mais tempo
+> marcado como tal (seção 6.4) — manual que promete função inexistente faz perder mais tempo
 > que manual nenhum.
 
 ---
@@ -52,22 +52,34 @@ mantém tudo dentro das regras da Riot — a gente não decifra, não intercepta
 2. Extraia a pasta em qualquer lugar
 3. Dê **dois cliques em `RiftCoach.bat`**
 
-Pronto. Ele instala tudo que falta, abre um assistente e te guia em 4 passos:
+**Na primeira vez** aparece uma janela preta baixando o que falta — Python e bibliotecas, cerca de
+um minuto. Ela mostra o progresso de propósito: um programa que não dá sinal de vida durante um
+minuto parece travado.
 
-```
-Passo 1 de 4 · Conectar com a Riot
-Passo 2 de 4 · Identificar sua conta
-Passo 3 de 4 · Baixar suas partidas
-Passo 4 de 4 · Abrir o seu relatorio
-```
+**Depois disso, você nunca mais vê terminal.** O que abre é esta janela:
 
-O assistente **pergunta uma coisa de cada vez** e sempre diz qual é o próximo passo. Se algo der
-errado, ele explica o que fazer — nunca deixa sem saída.
+![A janela pedindo a chave da Riot](img/janela-chave.png)
 
-> **Pode fechar no meio.** Nada se perde: ao abrir de novo, ele continua de onde você parou e não
+São 4 passos, e a barra no topo mostra em qual você está:
+
+| Passo | O que ele pede |
+|---|---|
+| 1. Chave | a chave gratuita da Riot — com botão que abre o site |
+| 2. Conta | o seu Riot ID e a sua região |
+| 3. Partida | nada; ele baixa e analisa sozinho |
+| 4. Revisar | como você quer ver o resultado |
+
+A janela **pergunta uma coisa de cada vez** e sempre diz qual é o próximo passo. Se algo der errado,
+ela explica o que fazer — nunca deixa sem saída, e nenhuma das opções de recuperação apaga nada.
+
+> **Pode fechar no meio.** Nada se perde: ao abrir de novo, ela continua de onde você parou e não
 > repete pergunta já respondida.
 
-Nas próximas vezes, dois cliques no mesmo arquivo abrem direto o relatório.
+No fim, você escolhe entre ler o relatório no navegador ou ver as marcações dentro do replay:
+
+![A tela final, com as duas formas de revisar](img/janela-pronto.png)
+
+Nas próximas vezes, dois cliques no mesmo arquivo abrem direto nesta janela.
 
 ---
 
@@ -411,7 +423,7 @@ e mesmo lá ficam marcadas como **T3**.
 
 ## 6. A tela de revisão
 
-> **O que está nesta seção existe e funciona hoje.** O que ainda não existe está na seção 6.3,
+> **O que está nesta seção existe e funciona hoje.** O que ainda não existe está na seção 6.4,
 > separado de propósito — manual que descreve função inexistente faz perder mais tempo que manual
 > nenhum.
 
@@ -463,21 +475,98 @@ League navegar até o momento — **8 segundos antes**, porque o erro é a decis
 
 Sem replay aberto, o botão responde explicando o que falta. Não trava nem dá erro genérico.
 
-### 6.3 O que ainda NÃO existe
+### 6.3 Marcações dentro do replay (o overlay)
 
-Foi projetado, os modelos de dados estão no código (`Mark`, `ReviewSession`), mas **a interface não
-foi construída**:
+Esta é a forma de revisar mais próxima de ter um coach do lado. O RiftCoach desenha por cima da
+janela do jogo, sincronizado com o relógio do próprio replay.
+
+**Antes de abrir, dois pré-requisitos que ninguém adivinha:**
+
+1. A **Replay API precisa estar ligada** (seção 2, passo 5) — vem desligada de fábrica.
+2. O jogo precisa estar em **"Sem bordas"**. Em tela cheia exclusiva o Windows não permite que nada
+   apareça por cima; não é limitação do RiftCoach. Troque em Configurações → Vídeo → Modo de janela.
+
+**Como abrir**, pela janela: clique em **Abrir overlay** na tela final. Pelo terminal:
+
+```bash
+uv run riftcoach overlay "SeuNome#TAG"
+```
+
+Depois abra o replay no client e dê play. O overlay encontra a janela do jogo sozinho.
+
+#### O que aparece
+
+![O cartão do erro, alguns segundos antes de ele acontecer](img/overlay-cartao-critico.jpg)
+
+**O cartão entra ANTES do erro**, com uma barrinha contando quanto falta. Essa é a decisão de design
+mais importante do overlay inteiro: se ele aparecesse só no instante marcado, você leria o
+diagnóstico depois de já ter visto o desfecho — a resposta antes da pergunta. Aparecendo antes, você
+lê, olha, e vê acontecer. Quando chega o momento, a barra enche e o texto vira **AGORA**.
+
+Cada cartão traz:
+
+| Parte | O que é |
+|---|---|
+| `ERRO #3` | a posição na lista, ordenada pelo que mais custou |
+| a categoria | wave, posicionamento, objetivo, recall... |
+| o minuto | o instante exato da decisão |
+| a frase | **o que observar**, não a correção — a correção está no relatório |
+| `custou 7.3 pontos` | a perda medida em probabilidade de vitória, quando há blunder medido perto |
+
+**A faixa no topo** é a partida inteira. Cada marcação é um traço, colorido pela gravidade: erro
+crítico é vermelho e o dobro de largo, erro médio é laranja, leve é amarelo, e as suas marcações têm
+cor própria. A linha branca é onde o replay está.
+
+**No minimapa**, um anel acompanha onde você estava, com um rastro pontilhado do último minuto. O
+anel é largo de propósito: a Riot só entrega uma posição por minuto, e um ponto fino fingiria uma
+precisão que não existe.
+
+#### Os atalhos
+
+Com a **janela do jogo na frente**:
+
+| Atalho | O que faz |
+|---|---|
+| `Ctrl+Alt+E` | marcar um erro seu |
+| `Ctrl+Alt+N` | uma anotação |
+| `Ctrl+Alt+G` | algo que você fez bem |
+| `Ctrl+Alt+Q` | uma dúvida para rever depois |
+| `Ctrl+Alt+S` | pular para a **próxima** marcação (8 s antes dela) |
+| `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
+| `Ctrl+Alt+H` | esconder o overlay |
+
+`Ctrl+Alt+S` transforma a revisão num passeio guiado: você percorre os seus erros em ordem, sem
+tocar na linha do tempo do client.
+
+![Uma marcação sua, no meio das da IA](img/overlay-sua-marcacao.jpg)
+
+#### As marcações ficam salvas
+
+Ao reabrir a mesma partida, as suas anotações voltam junto com as da IA, e o overlay avisa em que
+minuto você parou. Reanalisar a partida com um modelo melhor troca as marcações da IA e **não
+encosta nas suas** — elas são o único dado aqui que não dá para recalcular.
+
+E é comparando as duas que se aprende mais:
+
+- onde a **IA marcou crítico e você não sentiu nada** → ponto cego;
+- onde **você sentiu que errou e a medição não viu** → quase sempre troca de dano, combo ou
+  posicionamento fino, que a telemetria da Riot simplesmente não registra.
+
+Para levar as marcações para fora (um Discord de time, por exemplo):
+
+```bash
+uv run riftcoach marcacoes BR1_3285629030 --riot-id "SeuNome#TAG"
+uv run riftcoach marcacoes BR1_3285629030 --riot-id "SeuNome#TAG" --formato json
+```
+
+### 6.4 O que ainda NÃO existe
 
 | Planejado | Estado |
 |---|---|
-| Você marcar seus próprios momentos | ☐ sem UI |
-| Escrever anotações num momento | ☐ sem UI |
-| Retomar a revisão de onde parou | ☐ sem persistência |
-| Atalhos de teclado (`M`, `E`, `?`, `B`) | ☐ não implementados |
-| Perguntar à IA sobre um momento | ☐ depende da camada de IA |
-
-Hoje a linha do tempo tem **só as marcações da IA** — que são os próprios findings, cada um com
-gravidade medida e alvo de replay.
+| Escrever um texto livre na sua marcação | ☐ hoje ela grava só o tipo e o minuto |
+| Clicar numa marcação da faixa para pular | ☐ o overlay atravessa o clique de propósito, para nunca atrapalhar o jogo |
+| Perguntar à IA sobre um momento específico | ☐ depende da camada de IA |
+| Desenhar setas e círculos no espaço 3D do jogo | ☐ exige projetar câmera; hoje só minimapa, que é 2D e exato |
 
 ---
 

@@ -331,9 +331,7 @@ def test_generic_findings_are_kept_when_nothing_explains_them() -> None:
 
 def test_ranking_puts_the_worst_first(garen: MatchFacts) -> None:
     ordenados = rank(_all_findings(garen))
-    assert [f.severity for f in ordenados] == sorted(
-        (f.severity for f in ordenados), reverse=True
-    )
+    assert [f.severity for f in ordenados] == sorted((f.severity for f in ordenados), reverse=True)
 
 
 def test_the_report_is_capped(garen: MatchFacts) -> None:
