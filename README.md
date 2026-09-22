@@ -47,17 +47,30 @@ porque o erro é a decisão, não a consequência.
 
 ## Começando
 
+**Não sabe o que é terminal? Não precisa saber.**
+
+1. [**Baixe o ZIP**](https://github.com/Kazualkun/LeagueCoaching/archive/refs/heads/main.zip) e extraia
+2. Dois cliques em **`RiftCoach.bat`**
+
+Ele instala tudo sozinho e abre um assistente que te guia em 4 passos, perguntando uma coisa de cada
+vez. Pode fechar no meio — ao reabrir, continua de onde parou.
+
+<details>
+<summary><b>Prefere terminal?</b></summary>
+
 ```bash
 git clone https://github.com/Kazualkun/LeagueCoaching.git
 cd LeagueCoaching
 
-uv run riftcoach auth                        # cole sua chave da Riot
-uv run riftcoach sync-patch                  # nomes de itens e runas
-uv run riftcoach analyze "SeuNome#TAG"       # o relatório
+uv run riftcoach start                       # o mesmo assistente
+uv run riftcoach analyze "SeuNome#TAG"       # direto ao relatório
+uv run riftcoach web "SeuNome#TAG"           # no navegador
+uv run riftcoach doctor                      # o que falta, e por quê
 ```
 
-O `uv` instala o Python e todas as dependências na primeira execução. Não precisa criar venv nem
-rodar `pip install`.
+O `uv` instala o Python e as dependências na primeira execução.
+
+</details>
 
 Dois comandos que valem conhecer antes de qualquer coisa dar errado:
 

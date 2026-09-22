@@ -46,6 +46,33 @@ mantém tudo dentro das regras da Riot — a gente não decifra, não intercepta
 
 ## 2. Instalação
 
+### O jeito fácil: um arquivo, dois cliques
+
+1. Baixe o projeto: [**Code → Download ZIP**](https://github.com/Kazualkun/LeagueCoaching/archive/refs/heads/main.zip)
+2. Extraia a pasta em qualquer lugar
+3. Dê **dois cliques em `RiftCoach.bat`**
+
+Pronto. Ele instala tudo que falta, abre um assistente e te guia em 4 passos:
+
+```
+Passo 1 de 4 · Conectar com a Riot
+Passo 2 de 4 · Identificar sua conta
+Passo 3 de 4 · Baixar suas partidas
+Passo 4 de 4 · Abrir o seu relatorio
+```
+
+O assistente **pergunta uma coisa de cada vez** e sempre diz qual é o próximo passo. Se algo der
+errado, ele explica o que fazer — nunca deixa sem saída.
+
+> **Pode fechar no meio.** Nada se perde: ao abrir de novo, ele continua de onde você parou e não
+> repete pergunta já respondida.
+
+Nas próximas vezes, dois cliques no mesmo arquivo abrem direto o relatório.
+
+---
+
+### O jeito manual (para quem usa terminal)
+
 ### Passo 1 — instalar o uv
 
 **Windows (PowerShell):**

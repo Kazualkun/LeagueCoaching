@@ -114,6 +114,26 @@ def auth(
 
 
 @app.command()
+def start() -> None:
+    """Assistente guiado. E o que o RiftCoach.bat abre.
+
+    Pensado para quem nao sabe o que e terminal: um passo de cada vez, sem
+    jargao, e sempre dizendo qual e o proximo. O `doctor` continua sendo a
+    ferramenta de quem entende — ele diz o que esta errado; o assistente
+    resolve.
+    """
+    from riftcoach.wizard import run
+
+    try:
+        run()
+    except KeyboardInterrupt:
+        console.print(
+            "\n[dim]Interrompido. Nada foi perdido — "
+            "abra de novo quando quiser.[/]"
+        )
+
+
+@app.command()
 def logout() -> None:
     """Remove a chave da Riot do cofre."""
     if delete_key_from_keyring("riot"):

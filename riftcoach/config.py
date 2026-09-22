@@ -132,4 +132,33 @@ def delete_key_from_keyring(name: str) -> bool:
         return False
 
 
+def _prefs_path() -> Path:
+    return data_dir() / "prefs.json"
+
+
+def load_prefs() -> dict[str, str]:
+    """Preferencias simples do usuario (Riot ID, plataforma).
+
+    Arquivo separado do `.env` de proposito: o `.env` e para quem edita
+    configuracao a mao; isto e para o que o assistente guardou sozinho, e quem
+    usa o RiftCoach clicando num .bat nunca vai abrir nenhum dos dois.
+    """
+    import json
+
+    try:
+        return dict(json.loads(_prefs_path().read_text(encoding="utf-8")))
+    except Exception:
+        return {}
+
+
+def save_pref(key: str, value: str) -> None:
+    import json
+
+    prefs = load_prefs()
+    prefs[key] = value
+    _prefs_path().write_text(
+        json.dumps(prefs, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 settings = Settings()
