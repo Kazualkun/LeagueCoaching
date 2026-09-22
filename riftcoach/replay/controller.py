@@ -20,6 +20,8 @@ recusar.
 
 from __future__ import annotations
 
+import asyncio
+import statistics
 from dataclasses import dataclass, field
 
 from riftcoach.core.errors import LiveGameRefused
@@ -32,6 +34,17 @@ LEAD_IN_S = 8.0
 # refeita. Meio segundo e a folga que a propria documentacao da Riot sugere
 # para leituras feitas na mesma janela.
 DRIFT_TOLERANCE_S = 0.5
+
+# Quantas amostras a calibracao exige, e o espacamento entre elas.
+# Medido contra o client: depois de um salto grande os dois relogios levam
+# cerca de 4 segundos para voltar a concordar. Tres amostras a 0,7s cobrem
+# essa janela sem deixar a calibracao lenta.
+SETTLE_SAMPLES = 3
+SETTLE_INTERVAL_S = 0.7
+# As amostras precisam concordar dentro disto. Folgado o bastante para a
+# taxa de quadros, apertado o bastante para reprovar o transitorio, que
+# chegou a 31 segundos.
+SETTLE_TOLERANCE_S = 2.0
 
 
 @dataclass
@@ -54,17 +67,17 @@ class ReplayController:
 
     guard: ReplayGuard
     calibration: Calibration | None = None
+    # Espacamento entre as amostras de estabilidade. Campo da instancia, e nao
+    # so parametro de `calibrate`: `check_drift` recalibra por dentro, e um
+    # parametro que so o chamador de fora conhece seria esquecido justamente
+    # ali.
+    settle_interval_s: float = SETTLE_INTERVAL_S
     _drifts: int = field(default=0, init=False)
 
-    async def calibrate(self) -> Calibration:
-        """Mede o offset entre o relogio do replay e o da timeline.
-
-        As duas leituras precisam cair na mesma janela curta; por isso elas
-        acontecem aqui, coladas, em vez de serem passadas de fora.
-        """
+    async def _read_pair(self) -> tuple[float, float]:
+        """Os dois relogios, lidos colados na mesma janela curta."""
         playback: PlaybackState = await self.guard.assert_replay_mode()
         stats = await self.guard.get("/liveclientdata/gamestats")
-
         game_time = _game_time_of(stats)
         if game_time is None:
             raise LiveGameRefused(
@@ -74,10 +87,53 @@ class ReplayController:
                     "replay, e alinhar errado e pior que nao alinhar."
                 ),
             )
+        return playback.time, game_time
 
+    async def calibrate(
+        self, *, samples: int = SETTLE_SAMPLES, interval_s: float | None = None
+    ) -> Calibration:
+        """Mede o offset, exigindo que a leitura esteja ESTAVEL.
+
+        Uma leitura unica nao serve, e isso foi medido contra o client de
+        verdade. Logo apos um seek os dois relogios divergem de forma
+        transitoria enquanto o jogo simula ate o instante pedido:
+
+            t+2s   playback=600.0  gameTime=602.3   (playback congelado no alvo)
+            t+4s   playback=604.4  gameTime=604.5   (ja assentou)
+
+        Num salto grande a divergencia chegou a 31 SEGUNDOS tres segundos
+        depois do seek. Calibrar ali grava um offset absurdo e desalinha todo
+        finding depois — com cara de certeza, porque nada no resultado denuncia
+        que a medicao foi feita no momento errado.
+
+        Entao: varias amostras espacadas, e o offset so vale se elas
+        concordarem entre si.
+        """
+        espera = self.settle_interval_s if interval_s is None else interval_s
+        medidas: list[tuple[float, float]] = []
+        for i in range(max(1, samples)):
+            if i:
+                await asyncio.sleep(espera)
+            medidas.append(await self._read_pair())
+
+        offsets = [p - g for p, g in medidas]
+        espalhamento = max(offsets) - min(offsets)
+        if espalhamento > SETTLE_TOLERANCE_S:
+            raise LiveGameRefused(
+                f"os relogios do replay ainda nao assentaram "
+                f"(variacao de {espalhamento:.1f}s entre amostras)",
+                hint=(
+                    "Isso acontece logo depois de pular para outro instante: o "
+                    "jogo ainda esta simulando ate la. Espere alguns segundos e "
+                    "tente de novo. Calibrar agora desalinharia todos os "
+                    "findings."
+                ),
+            )
+
+        playback_s, _ = medidas[-1]
         self.calibration = Calibration(
-            offset_s=playback.time - game_time,
-            measured_at_replay_s=playback.time,
+            offset_s=statistics.median(offsets),
+            measured_at_replay_s=playback_s,
         )
         return self.calibration
 

@@ -26,6 +26,7 @@ from riftcoach.core.errors import LiveGameRefused
 from riftcoach.replay.controller import (
     DRIFT_TOLERANCE_S,
     LEAD_IN_S,
+    SETTLE_SAMPLES,
     Calibration,
     ReplayController,
 )
@@ -422,20 +423,23 @@ async def test_calibration_refuses_when_the_game_clock_is_unreadable() -> None:
 @respx.mock
 @pytest.mark.asyncio
 async def test_drift_is_detected_when_the_user_navigates_manually() -> None:
-    # calibrate() sonda DUAS vezes: uma em assert_replay_mode e outra dentro
-    # do guard.get. Um calibrate seguido de um check_drift consome quatro.
+    # Cada AMOSTRA da calibracao sonda o playback duas vezes: uma em
+    # assert_replay_mode e outra dentro do guard.get. Com amostragem de
+    # estabilidade, um calibrate custa SETTLE_SAMPLES x 2 sondas.
+    #
+    # Aqui a primeira calibracao ve o replay em 930,5s e a segunda em 1200s,
+    # com o mesmo gameTime — que e exatamente o que acontece quando o usuario
+    # arrasta a barra de tempo a mao.
     respx.get(PLAYBACK).mock(
-        side_effect=[
-            httpx.Response(200, json=BOM),
-            httpx.Response(200, json=BOM),
-            httpx.Response(200, json={**BOM, "time": 1200.0}),
-            httpx.Response(200, json={**BOM, "time": 1200.0}),
-        ]
+        side_effect=(
+            [httpx.Response(200, json=BOM)] * (SETTLE_SAMPLES * 2)
+            + [httpx.Response(200, json={**BOM, "time": 1200.0})] * (SETTLE_SAMPLES * 2)
+        )
     )
     respx.get(f"{BASE}/liveclientdata/gamestats").mock(
         return_value=httpx.Response(200, json={"gameTime": 900.0})
     )
-    c = ReplayController(_guard())
+    c = ReplayController(_guard(), settle_interval_s=0.0)
     await c.calibrate()
     deriva = await c.check_drift()
     assert deriva > DRIFT_TOLERANCE_S
@@ -558,3 +562,79 @@ def test_find_replay_handles_a_missing_directory(tmp_path: Path) -> None:
 
 def test_rofl_meta_defaults_to_an_empty_stats_list() -> None:
     assert RoflMeta(path=Path("x.rofl")).stats == []
+
+
+# --------------------------------------------------------------------------
+# Estabilidade da calibracao (medida contra o client de verdade)
+# --------------------------------------------------------------------------
+
+
+class _RelogiosFalsos:
+    """Guard falso que devolve uma sequencia de pares (playback, gameTime)."""
+
+    def __init__(self, pares: list[tuple[float, float]]) -> None:
+        self.pares = list(pares)
+        self.i = 0
+
+    def _proximo(self) -> tuple[float, float]:
+        par = self.pares[min(self.i, len(self.pares) - 1)]
+        self.i += 1
+        return par
+
+    async def assert_replay_mode(self):  # type: ignore[no-untyped-def]
+        from riftcoach.replay.guard import PlaybackState
+
+        self._atual = self._proximo()
+        return PlaybackState(
+            time=self._atual[0], length=1500.0, paused=False, seeking=False, speed=1.0
+        )
+
+    async def get(self, path: str):  # type: ignore[no-untyped-def]
+        return {"gameTime": self._atual[1]}
+
+    async def post(self, path: str, payload: dict):  # type: ignore[no-untyped-def]
+        return None
+
+
+@pytest.mark.asyncio
+async def test_calibration_refuses_an_unsettled_replay() -> None:
+    """A medicao que motivou a mudanca.
+
+    Contra o client real, tres segundos depois de um salto grande os dois
+    relogios estavam 31 SEGUNDOS separados — `playback.time` ainda congelado no
+    alvo do seek enquanto o jogo simulava ate la. Calibrar nesse instante grava
+    um offset absurdo e desalinha todo finding depois, sem nada no resultado
+    denunciar que a medicao foi feita na hora errada.
+    """
+    from riftcoach.replay.controller import ReplayController
+
+    ctrl = ReplayController(settle_interval_s=0.0, guard=_RelogiosFalsos(  # type: ignore[arg-type]
+        [(295.0, 264.0), (297.0, 290.0), (299.0, 299.0)]
+    ))
+    with pytest.raises(LiveGameRefused, match="assentaram"):
+        await ctrl.calibrate()
+
+
+@pytest.mark.asyncio
+async def test_calibration_accepts_a_settled_replay() -> None:
+    """Depois de assentar, os relogios concordam dentro de ~0,1s — foi
+    exatamente o que o client mostrou a partir de t+4s."""
+    from riftcoach.replay.controller import ReplayController
+
+    ctrl = ReplayController(settle_interval_s=0.0, guard=_RelogiosFalsos(  # type: ignore[arg-type]
+        [(604.4, 604.5), (606.5, 606.6), (608.6, 608.7)]
+    ))
+    cal = await ctrl.calibrate()
+    assert cal.offset_s == pytest.approx(-0.1, abs=0.05)
+
+
+@pytest.mark.asyncio
+async def test_calibration_uses_the_median_not_the_last_reading() -> None:
+    """Uma amostra fora do lugar dentro da tolerancia nao deve puxar o offset."""
+    from riftcoach.replay.controller import ReplayController
+
+    ctrl = ReplayController(settle_interval_s=0.0, guard=_RelogiosFalsos(  # type: ignore[arg-type]
+        [(600.0, 600.0), (602.0, 600.5), (604.0, 604.0)]
+    ))
+    cal = await ctrl.calibrate()
+    assert cal.offset_s == pytest.approx(0.0, abs=0.01)

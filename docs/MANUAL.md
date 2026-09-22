@@ -94,7 +94,30 @@ uv run riftcoach sync-patch
 Baixa nomes e atributos de itens, runas e campeões do DataDragon (a CDN pública da Riot). Sem isso, o
 relatório mostra `3076` em vez de `Colete Espinhoso`.
 
-### Passo 5 — conferir
+### Passo 5 — ligar a Replay API do League
+
+**Obrigatório para o modo replay.** A Replay API do jogo vem **desligada de fábrica** — a
+documentação da Riot é explícita: *"By default the Replay API is disabled."*
+
+```bash
+uv run riftcoach enable-replay-api
+```
+
+O comando adiciona `EnableReplayApi=1` na seção `[General]` do `game.cfg` e grava um backup
+`.riftcoach-bak` antes de mexer. Depois disso, **reabra o replay** para a mudança valer.
+
+Se preferir editar à mão, o arquivo fica em
+`C:\Riot Games\League of Legends\Config\game.cfg`:
+
+```ini
+[General]
+EnableReplayApi=1
+```
+
+> **Sem esse passo**, `https://127.0.0.1:2999/replay/playback` responde 404 e o RiftCoach recusa a
+> conexão. Ele vai dizer exatamente isso — não precisa adivinhar.
+
+### Passo 6 — conferir
 
 ```bash
 uv run riftcoach doctor --riot-id "SeuNome#TAG"
@@ -448,6 +471,9 @@ em cache. O relatório sempre usa o patch em que a partida foi jogada, nunca o a
 | `Não encontrado` (404) | Riot ID errado | Confira `Nome#TAG` no client e a região no `.env` |
 | `mapId 30 não é Summoner's Rift` | Partida de Arena | Use `-q 420` para filtrar ranked solo |
 | `League client não está rodando` | Sem replay aberto | Abra o replay antes |
+| `a Replay API do League está desligada` | Falta `EnableReplayApi=1` | `uv run riftcoach enable-replay-api` |
+| `certificado do client não confere` | Certificado ainda não fixado | `uv run riftcoach pin-cert` |
+| `os relógios ainda não assentaram` | Seek recente; o jogo ainda simula | Espere ~5s e tente de novo |
 | `Parece haver uma partida ao vivo` | Proteção de conformidade | Encerre a partida — o RiftCoach nunca roda ao vivo |
 | Itens aparecem como números | Patch não sincronizado | `uv run riftcoach sync-match-patches` |
 
