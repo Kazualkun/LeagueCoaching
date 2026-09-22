@@ -157,9 +157,11 @@ Detalhamento técnico completo: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 | **3 · Roteador de modelos + passes dos analistas** | ✅ |
 | **4 · Harness de avaliação + matriz de compatibilidade** | ✅ |
 | **5 · Interface web + controle do replay** | ✅ |
-| 7 · Enriquecimento por visão + empacotamento Tauri | ☐ |
+| **7 · Visão: geometria da HUD, amostragem, OCR e sincronia** | ✅ |
+| 7 · Visão: leitura do minimapa por VLM | ☐ |
+| 7 · Empacotamento Tauri | ☐ |
 
-**466 testes**, `ruff` e `mypy --strict` limpos. Números medidos em 16 partidas reais de SR:
+**547 testes**, `ruff` e `mypy --strict` limpos. Números medidos em 16 partidas reais de SR:
 
 | | |
 |---|---|
