@@ -91,7 +91,7 @@ tier gratuito.
 | Backend | **Python 3.11 + FastAPI + uv** | Domina o ecossistema de CV/dados; o `uv` transforma a instalação no Windows em um comando. |
 | Frontend | **SPA Vite + React servida pelo FastAPI (v1) → shell Tauri (v2)** | Velocidade para contribuidores agora, instalador de 10 MB depois. Streamlit descartado: não consegue fazer uma linha do tempo navegável. |
 | Cliente da Riot | **Cliente `httpx` próprio** | Dados de partida são imutáveis → cache permanente é o maior ganho isolado, e wrappers atrapalham isso. |
-| Cliente de LLM | **Um único `AsyncOpenAI` contra 5 `base_url`s diferentes** | Ollama, Groq, OpenRouter, Cerebras e Gemini falam OpenAI-compat. Um só caminho de código. |
+| Cliente de LLM | **Um único `AsyncOpenAI` contra 5 `base_url`s diferentes** | Ollama, Groq, OpenRouter, Mistral e Gemini falam OpenAI-compat. Um só caminho de código. |
 
 Raciocínio completo por seção:
 

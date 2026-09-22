@@ -155,6 +155,25 @@ def default_providers() -> list[ProviderConfig]:
             options={"temperature": 0.3},
         ),
         ProviderConfig(
+            name="mistral",
+            base_url="https://api.mistral.ai/v1",
+            cost_class="free_cloud",
+            privacy="leaves_machine",
+            # Existe aqui por DISPONIBILIDADE, nao por ser melhor: e sediada na
+            # UE, entao atende paises onde o Google AI Studio nao abre. Um
+            # usuario sem alternativa cai no relatorio sem IA — que funciona,
+            # mas e menos do que ele poderia ter.
+            caps=frozenset(
+                {Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}
+            ),
+            ctx_tokens=32_768,
+            api_key_name="mistral",
+            text_model="",
+            model_prefers=("small-latest", "small", "mistral"),
+            rate_limit=RateLimit(requests=15, window_s=60.0),
+            options={"temperature": 0.3},
+        ),
+        ProviderConfig(
             name="openrouter",
             base_url="https://openrouter.ai/api/v1",
             cost_class="free_cloud",

@@ -136,7 +136,7 @@ riftcoach-ai/
 │   │   ├── breaker.py             # circuit breaker + token-bucket limiter
 │   │   ├── hardware.py            # VRAM probe -> tier (incl. KV-cache headroom)
 │   │   └── providers/
-│   │       ├── openai_compat.py   # ollama | groq | openrouter | cerebras | gemini-compat
+│   │       ├── openai_compat.py   # ollama | groq | openrouter | mistral | gemini-compat
 │   │       └── gemini_native.py   # video upload path ONLY
 │   │
 │   ├── analysis/

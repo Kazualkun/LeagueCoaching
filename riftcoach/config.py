@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     groq_api_key: str | None = None
     openrouter_api_key: str | None = None
+    mistral_api_key: str | None = None
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
 
     # strict NAO e um filtro cosmetico: ele e aplicado no roteador ANTES de

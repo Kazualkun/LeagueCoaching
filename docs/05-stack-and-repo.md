@@ -140,7 +140,7 @@ riftcoach-ai/
 │   │   ├── breaker.py             # circuit breaker + token bucket
 │   │   ├── hardware.py            # detecção de VRAM -> tier (incluindo folga de cache KV)
 │   │   └── providers/
-│   │       ├── openai_compat.py   # ollama | groq | openrouter | cerebras | gemini-compat
+│   │       ├── openai_compat.py   # ollama | groq | openrouter | mistral | gemini-compat
 │   │       └── gemini_native.py   # SOMENTE o caminho de upload de vídeo
 │   │
 │   ├── analysis/

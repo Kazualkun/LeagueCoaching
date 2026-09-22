@@ -89,7 +89,7 @@ lets the whole thing run on a free tier.
 | Backend | **Python 3.11 + FastAPI + uv** | Owns the CV/data ecosystem; `uv` makes Windows install one command. |
 | Frontend | **Vite + React SPA served by FastAPI (v1) → Tauri shell (v2)** | Contributor velocity now, 10 MB installer later. Streamlit rejected: cannot do a scrubbable moment timeline. |
 | Riot client | **Hand-rolled `httpx` client** | Match data is immutable → permanent caching is the biggest single win, and wrappers make that awkward. |
-| LLM client | **One `AsyncOpenAI` against 5 different `base_url`s** | Ollama, Groq, OpenRouter, Cerebras and Gemini all speak OpenAI-compat. One code path. |
+| LLM client | **One `AsyncOpenAI` against 5 different `base_url`s** | Ollama, Groq, OpenRouter, Mistral and Gemini all speak OpenAI-compat. One code path. |
 
 Full reasoning per section:
 

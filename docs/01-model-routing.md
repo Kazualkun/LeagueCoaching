@@ -94,7 +94,8 @@ Tudo que ele emite é carimbado como `EvidenceTier.T3_INFERRED`. Ele é um senso
 | **Google AI Studio — Gemini 2.5 Flash / 2.0 Flash** | **Padrão na nuvem. Texto + o *único* bom caminho para VOD.** | RPM/RPD generosos, contexto enorme | **Principal.** Exclusivamente: ingere um *arquivo de vídeo direto*, com amostragem nativa de ~1 fps, e responde com timestamps reais. Essa capacidade sozinha reduz o Modo C de um pipeline de extração de frames para uma única chamada de API. |
 | **Groq** | Follow-ups interativos sensíveis a latência | RPM alto, RPD baixo, OpenAI-compat | **Secundário.** A inferência é dramaticamente mais rápida que qualquer outra coisa; a cota diária pequena o torna errado para lote e certo para "pergunte algo sobre este momento". |
 | **OpenRouter (modelos `:free`)** | Transbordo / escolha do usuário | Por modelo, volátil | **Terciário.** A disponibilidade de modelos muda o tempo todo — trate como configurado pelo usuário, nunca como padrão. |
-| **Cerebras** | Texto rápido opcional | Rápido, cota pequena | Mesmo papel do Groq. |
+| **Mistral** | Quando Google/Groq não abrem no país | Tier gratuito, sediada na UE | **Quarta opção.** Está no catálogo por DISPONIBILIDADE geográfica, não por ser melhor. |
+| ~~Cerebras~~ | — | **deixou de ser gratuita** | Virou trial de US$5 com cartão (verificado em set/2026). Removida das recomendações. |
 
 Os quatro falam o schema de Chat Completions da OpenAI (o Gemini via sua base URL OpenAI-compat),
 então uma única instância `AsyncOpenAI` com `base_url` + `api_key` trocados cobre toda a superfície
