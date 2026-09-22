@@ -157,11 +157,15 @@ class ReplayGuard:
                 hint=_HINT_REPLAY,
             ) from e
         except httpx.TimeoutException as e:
+            # A mensagem precisa nomear o endereco e o modo replay igual as
+            # outras ramificacoes. "nao respondeu a tempo", sozinho, nao diz
+            # QUAL client nem O QUE fazer — e recusa que o usuario nao sabe
+            # resolver e indistinguivel de bug.
             raise LiveGameRefused(
-                "o client do League nao respondeu a tempo",
+                f"o client do League nao respondeu a tempo em {HOST}:{PORT}"
+                " (/replay/playback)",
                 hint=(
-                    "Resultado ambiguo e tratado como recusa. Confirme que um "
-                    "replay esta rodando e tente de novo."
+                    "Resultado ambiguo e tratado como recusa. " + _HINT_REPLAY
                 ),
             ) from e
         except httpx.HTTPError as e:

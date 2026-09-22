@@ -18,7 +18,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+import respx
 
 pytest.importorskip("fastapi", reason="a interface web e um extra opcional")
 
@@ -29,6 +31,7 @@ from riftcoach.api import app as api
 from riftcoach.knowledge.benchmarks import BenchmarkTable
 from riftcoach.parse.distill import distill
 from riftcoach.parse.facts import MatchFacts
+from riftcoach.replay.guard import BASE as GUARD_BASE
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -159,14 +162,41 @@ def test_replay_status_reports_absence_as_data_not_error(client: Any) -> None:
     assert d["reason"]
 
 
-def test_a_refused_seek_is_409_with_an_explanation(client: Any) -> None:
+@pytest.mark.parametrize(
+    "falha",
+    [
+        httpx.ConnectError("recusada"),
+        httpx.ReadTimeout("demorou"),
+        httpx.ConnectTimeout("handshake pendurado"),
+    ],
+    ids=["conexao-recusada", "leitura-expirou", "conexao-expirou"],
+)
+@respx.mock
+def test_a_refused_seek_is_409_with_an_explanation(
+    client: Any, falha: Exception
+) -> None:
     """409 e nao 500: nao ha replay rodando, e essa e uma condicao esperada que
-    o usuario resolve abrindo um. A mensagem do guard vai junto."""
+    o usuario resolve abrindo um. A mensagem do guard vai junto.
+
+    O transporte e mockado de proposito. A versao anterior deste teste abria
+    conexao REAL com 127.0.0.1:2999 e passava so em maquina onde a porta recusa
+    na hora — onde o handshake pendura (client do League aberto, ou firewall
+    que descarta em vez de recusar) ela caia no ramo de timeout e falhava.
+    Teste que depende do que esta ouvindo numa porta local nao prova nada.
+
+    Parametrizar sobre os modos de falha tambem cobre a propriedade que
+    interessa: TODA recusa precisa ser acionavel, nao apenas a mais comum.
+    """
+    respx.get(f"{GUARD_BASE}/replay/playback").mock(side_effect=falha)
     api.SESSION.replay_path = Path("fake.rofl")
+
     r = client.post("/api/seek/0")
+
     assert r.status_code == 409
     d = r.json()
     assert d["error"]
+    # A mensagem precisa dizer ONDE falhou ou O QUE fazer — senao o usuario
+    # nao distingue recusa esperada de bug.
     assert "2999" in d["error"] or "replay" in d["error"].lower()
 
 
