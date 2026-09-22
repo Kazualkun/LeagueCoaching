@@ -75,11 +75,27 @@ files = [
     # replay/ e o intertravamento de conformidade: e o codigo do projeto onde
     # um bug silencioso tem a pior consequencia possivel para o usuario.
     "riftcoach/replay",
+    # vision/ produz evidencia T3, que o modelo trata como fato. Erro de
+    # geometria ou de instante ali vira afirmacao confiante sobre o quadro
+    # errado — o tipo de defeito que ninguem percebe olhando a saida.
+    "riftcoach/vision",
 ]
 
 [[tool.mypy.overrides]]
 module = ["zstandard.*", "aiosqlite.*", "keyring.*", "pyarrow.*", "uvicorn.*"]
 ignore_missing_imports = true
+
+# av e rapidocr nao publicam stubs; PIL publica, mas o do numpy usa a sintaxe
+# `type` de 3.12+ e quebra a checagem inteira contra o alvo 3.11.
+#
+# Rebaixar `python_version` para 3.12 resolveria e seria o caminho errado: o
+# projeto declara suporte a 3.11, e o alvo do mypy e justamente o que impede
+# alguem de usar sintaxe nova sem perceber. Pular a checagem DENTRO dessas
+# bibliotecas nao afeta a checagem do nosso codigo que as usa.
+[[tool.mypy.overrides]]
+module = ["av.*", "rapidocr_onnxruntime.*", "numpy.*", "PIL.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
