@@ -605,7 +605,7 @@ class App:
             # evitar.
             bandeiras = 0x08000000 if sys.platform == "win32" else 0
             subprocess.Popen(cmd, creationflags=bandeiras)
-            self._dizer("overlay aberto — volte para a janela do League", SUCESSO)
+            self._dizer("overlay aberto — CLIQUE na janela do League para vê-lo", SUCESSO)
 
         self._tarefa(conferir, pronto)
 

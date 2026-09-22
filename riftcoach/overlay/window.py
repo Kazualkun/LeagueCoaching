@@ -100,16 +100,52 @@ def client_rect_on_screen(hwnd: int) -> Rect | None:
     return Rect(float(p.x), float(p.y), float(w), float(h))
 
 
-def is_foreground(hwnd: int) -> bool:
-    """O jogo esta na frente?
+def pertence_a_revisao(frente: int, jogo: int, *nossas: int) -> bool:
+    """A janela ativa faz parte da revisao?
 
-    O overlay some quando nao esta — senao ele fica flutuando por cima do
-    navegador enquanto a pessoa le o relatorio, e um overlay que aparece onde
-    nao deveria e pior que nenhum overlay.
+    Esta funcao e pequena demais para merecer existir — e existe mesmo assim,
+    porque o bug que ela impede e invisivel e caro.
+
+    A versao anterior perguntava "o jogo e a janela ativa?". Acontece que a
+    JANELA DO OVERLAY tambem pode estar em primeiro plano; quando estava, a
+    resposta era "nao", e o laco tirava o overlay da tela. Ele se escondia por
+    estar aparecendo. O sintoma era um lampejo e nada depois, sem uma linha de
+    log que explicasse.
+
+    A pergunta certa nao e "o jogo esta na frente" e sim "a janela ativa
+    pertence a esta revisao" — e uma delas e a nossa.
+    """
+    return frente == jogo or frente in nossas
+
+
+def is_foreground(hwnd: int, *tambem_vale: int) -> bool:
+    """A pessoa esta olhando para o jogo (ou para o nosso overlay)?
+
+    O overlay some quando ela nao esta — senao fica flutuando por cima do
+    navegador enquanto ela le o relatorio, e um overlay que aparece onde nao
+    deveria e pior que nenhum overlay.
     """
     if not disponivel():
         return False
-    return int(ctypes.windll.user32.GetForegroundWindow()) == hwnd
+    frente = int(ctypes.windll.user32.GetForegroundWindow())
+    return pertence_a_revisao(frente, hwnd, *tambem_vale)
+
+
+# Argumentos de ShowWindow. `SHOWNOACTIVATE` e o ponto: mostrar SEM roubar o
+# foco de quem estiver usando. O `deiconify` do tkinter nao tem esse pudor —
+# ele ativa a janela, e ativar a nossa tira o jogo da frente.
+SW_HIDE = 0
+SW_SHOWNOACTIVATE = 4
+
+
+def show_no_activate(hwnd: int) -> None:
+    if disponivel():
+        ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), SW_SHOWNOACTIVATE)
+
+
+def hide(hwnd: int) -> None:
+    if disponivel():
+        ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), SW_HIDE)
 
 
 def make_click_through(hwnd: int) -> None:

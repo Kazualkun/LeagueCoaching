@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -44,6 +45,11 @@ SUMICOS_ATE_SAIR = 30
 
 # De quanto em quanto tempo a posicao atual vai para o disco.
 GRAVA_POSICAO_S = 10.0
+
+# Quanto tempo o cartao de apresentacao fica na tela. Contado em relogio de
+# PAREDE, nao no do replay: ele precisa sumir sozinho mesmo com o replay
+# pausado, que e exatamente como a maioria das pessoas abre o overlay.
+BOAS_VINDAS_S = 12.0
 
 
 # --------------------------------------------------------------------------
@@ -137,6 +143,10 @@ async def executar(
         ctrl = ReplayController(guard)
         cal = await ctrl.calibrate()
         log(f"replay sincronizado (defasagem de {cal.offset_s:+.2f}s)")
+        # Quem rodou o comando esta olhando para o TERMINAL, e o overlay so
+        # aparece sobre a janela do jogo. Sem esta frase a pessoa fica
+        # esperando na tela errada — que foi exatamente o que aconteceu.
+        log("CLIQUE NA JANELA DO LEAGUE para ver as marcacoes aparecerem")
 
         overlay = OverlayWindow()
         if not overlay.vazado:
@@ -155,6 +165,8 @@ async def executar(
         # Onde a revisao anterior parou. Guardado ANTES do laco comecar, porque
         # o proprio laco vai sobrescrever `last_position_ms` no primeiro quadro
         # — ler depois devolveria "onde voce esta", que nao serve para nada.
+        aberto_em = time.monotonic()
+        ja_apareceu = False
         retomar_de = rs.last_position_ms if rs and rs.last_position_ms > 0 else None
         if retomar_de:
             log(f"voce parou em {_mmss(retomar_de)} — Ctrl+Alt+R volta para la")
@@ -172,7 +184,11 @@ async def executar(
             sumicos = 0
 
             rect = win.client_rect_on_screen(hwnd)
-            frente = win.is_foreground(hwnd)
+            # O PROPRIO OVERLAY conta como "a pessoa esta no jogo". Sem
+            # isto ele se esconde por estar aparecendo: a janela dele vira a
+            # de primeiro plano, a pergunta "o jogo esta na frente?" responde
+            # nao, e o laco o retira da tela para sempre.
+            frente = win.is_foreground(hwnd, overlay.hwnd)
             if rect is None or not frente or oculto:
                 # Some junto com o jogo. Um overlay que continua flutuando por
                 # cima do navegador enquanto a pessoa le o relatorio e pior que
@@ -188,6 +204,14 @@ async def executar(
             st.width, st.height = int(rect.w), int(rect.h)
             overlay.cobrir(rect)
             overlay.mostrar(True)
+            if not ja_apareceu:
+                ja_apareceu = True
+                # O relogio das boas-vindas so comeca a contar agora: antes
+                # disso ninguem estava olhando para a tela do jogo, e um
+                # cartao de apresentacao exibido para ninguem e o mesmo que
+                # nao ter cartao nenhum.
+                aberto_em = time.monotonic()
+                log(f"overlay na tela · {len(st.marks)} marcacoes")
 
             try:
                 pb = await guard.assert_replay_mode()
@@ -196,7 +220,8 @@ async def executar(
                 break
 
             agora_ms = cal.to_timeline_ms(pb.time)
-            overlay.desenhar(build(st, agora_ms))
+            saudando = (time.monotonic() - aberto_em) < BOAS_VINDAS_S
+            overlay.desenhar(build(st, agora_ms, boas_vindas=saudando))
             overlay.bombear()
             res.quadros += 1
 

@@ -173,28 +173,84 @@ def _regua(st: OverlayState, now_ms: int) -> list[Primitive]:
     """A faixa de marcacoes colada no topo da tela.
 
     Vive nos primeiros pixels porque e a unica faixa larga que a HUD de
-    espectador deixa livre de ponta a ponta. O placar comeca mais abaixo
-    (SPEC_TEAM_GOLD esta em dy=0.014, ou seja 12 px em 900p).
+    espectador deixa livre de ponta a ponta — e uma linha do tempo PRECISA da
+    largura toda, senao deixa de ser uma linha do tempo.
+
+    A primeira versao era fina demais e muda: oito pixels de listra colorida
+    no canto de cima, sem rotulo nenhum. Quem via nao entendia que aquilo era
+    a partida inteira, nem o que as cores queriam dizer — e com razao. O que
+    conserta isso nao e cor mais forte, e CONTEXTO:
+
+      - o nome do programa na ponta esquerda, para as listras terem dono;
+      - o placar de marcacoes e o proximo erro na ponta direita, que e o que
+        a pessoa quer saber ("falta muito?");
+      - divisoes a cada 5 minutos, que transformam uma faixa em uma escala;
+      - um cursor com cabeca redonda, que se acha de relance.
+
+    As duas pontas ficam nos cantos que o placar do espectador nao alcanca
+    (ele comeca por volta de 21% da largura e acaba por volta de 80%).
     """
     if not st.show_ruler or st.duration_ms <= 0:
         return []
     u = st.u
-    alt = max(4.0, 0.009 * u)
-    out: list[Primitive] = [Box(Rect(0.0, 0.0, float(st.width), alt), fill="#161b22")]
+    alt = max(8.0, 0.016 * u)
+    larg_tela = float(st.width)
+    fonte = max(8.0, 0.0115 * u)
 
     def x_de(t_ms: int) -> float:
-        return st.width * min(1.0, max(0.0, t_ms / st.duration_ms))
+        return larg_tela * min(1.0, max(0.0, t_ms / st.duration_ms))
+
+    out: list[Primitive] = [Box(Rect(0.0, 0.0, larg_tela, alt), fill="#0b0e14")]
+
+    # A escala: uma divisao a cada 5 minutos. Sem elas a faixa nao diz que
+    # representa tempo; com elas, diz sozinha.
+    for minuto in range(5, st.duration_ms // 60_000 + 1, 5):
+        x = x_de(minuto * 60_000)
+        out.append(Line(x, alt * 0.45, x, alt, color="#30363d", width=1.0))
 
     for m in st.marks:
         x = x_de(m.t_ms)
         grave = m.kind == "critical" or (m.severity or 0) >= 4
         # Marcacao critica ganha o dobro de largura. E a unica diferenca de
         # tamanho na regua; o resto e so cor, para nao virar enfeite.
-        larg = max(2.0, 0.0035 * u) * (2 if grave else 1)
-        out.append(Box(Rect(x - larg / 2, 0.0, larg, alt), fill=cor_da_marca(m)))
+        meia = max(2.0, 0.0028 * u) * (2 if grave else 1)
+        out.append(Box(Rect(x - meia, 0.0, meia * 2, alt), fill=cor_da_marca(m)))
 
+    # O cursor: haste mais a cabeca redonda logo abaixo da faixa. A cabeca e o
+    # que permite achar o cursor sem procurar, porque nada mais na tela e um
+    # circulo branco solido naquela altura.
     xc = x_de(now_ms)
-    out.append(Line(xc, 0.0, xc, alt * 1.9, color="#ffffff", width=max(1.5, 0.002 * u)))
+    out.append(Line(xc, 0.0, xc, alt, color="#ffffff", width=max(2.0, 0.0025 * u)))
+    out.append(Circle(xc, alt + max(2.0, 0.003 * u), max(3.0, 0.0042 * u), fill="#ffffff"))
+
+    y_rotulo = alt + max(4.0, 0.006 * u)
+    out.append(
+        Label(
+            max(4.0, 0.004 * u),
+            y_rotulo,
+            "RIFTCOACH",
+            color=COR_FRACO,
+            size=fonte,
+            bold=True,
+        )
+    )
+
+    ia = [m for m in st.marks if m.author == "ai"]
+    passados = sum(1 for m in ia if m.t_ms <= now_ms)
+    direita = f"{passados}/{len(ia)} erros" if ia else "sem erros marcados"
+    prox = _proxima(st, now_ms)
+    if prox is not None:
+        direita += f"   ·   próximo em {mmss(prox[0].t_ms)}"
+    out.append(
+        Label(
+            larg_tela - max(4.0, 0.004 * u),
+            y_rotulo,
+            direita,
+            color=COR_TEXTO,
+            size=fonte,
+            anchor="ne",
+        )
+    )
     return out
 
 
@@ -353,6 +409,95 @@ def _aviso(st: OverlayState, now_ms: int) -> list[Primitive]:
     ]
 
 
+def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
+    """O cartao que aparece nos primeiros segundos, e so neles.
+
+    Existe por causa de um jeito especifico de o overlay parecer quebrado sem
+    estar: a pessoa abre o replay do inicio, as marcacoes estao aos 12, aos 18
+    e aos 24 minutos, e a tela fica — corretamente — vazia. Sem nada que diga
+    "estou aqui e conectado", a conclusao razoavel e que nao funcionou.
+
+    Entao ele responde as tres perguntas daquele momento, nesta ordem:
+    conectou? quantos erros tem? o que essas cores significam? E termina
+    dizendo como pular para o primeiro, que e o que a pessoa vai querer fazer
+    em seguida.
+    """
+    u = st.u
+    fonte = 0.0155 * u
+    pad = 0.014 * u
+    linha = fonte * 1.5
+    larg = 0.29 * st.width
+    x0 = 0.105 * st.width
+    y0 = 0.13 * st.height
+
+    ia = [m for m in st.marks if m.author == "ai"]
+    criticos = sum(1 for m in ia if m.kind == "critical" or (m.severity or 0) >= 4)
+    primeira = min((m.t_ms for m in ia), default=None)
+
+    legenda = [
+        (COR_CRITICO, "custou a partida"),
+        (COR_ERRO, "erro claro"),
+        (COR_LEVE, "detalhe a corrigir"),
+        (COR_USUARIO, "suas marcações"),
+    ]
+    atalhos = [
+        ("Ctrl+Alt+S", "pular para o próximo erro"),
+        ("Ctrl+Alt+E", "marcar um erro seu"),
+        ("Ctrl+Alt+H", "esconder isto"),
+    ]
+    altura = pad * 2 + linha * (3.2 + len(legenda) + len(atalhos))
+    caixa = Rect(x0, y0, larg, altura)
+
+    out: list[Primitive] = [
+        Box(caixa, fill=COR_FUNDO, outline=COR_BOM, width=max(1.5, 0.0022 * u)),
+        Box(Rect(x0, y0, max(3.0, 0.005 * u), altura), fill=COR_BOM),
+    ]
+    tx, ty = x0 + pad, y0 + pad
+    out.append(Label(tx, ty, "RIFTCOACH CONECTADO", color=COR_BOM, size=fonte, bold=True))
+    ty += linha
+
+    if ia:
+        resumo = f"{len(ia)} erros marcados, {criticos} deles graves"
+    else:
+        resumo = "nenhum erro marcado nesta partida"
+    out.append(Label(tx, ty, resumo, color=COR_TEXTO, size=fonte))
+    ty += linha * 1.25
+
+    # A legenda e a razao de o cartao existir. Listra colorida sem legenda e
+    # decoracao; com legenda, vira informacao.
+    for cor, texto in legenda:
+        out.append(Box(Rect(tx, ty + fonte * 0.18, fonte * 0.75, fonte * 0.75), fill=cor))
+        out.append(Label(tx + fonte * 1.25, ty, texto, color=COR_FRACO, size=fonte * 0.92))
+        ty += linha
+    ty += linha * 0.25
+
+    for tecla, texto in atalhos:
+        out.append(Label(tx, ty, tecla, color=COR_TEXTO, size=fonte * 0.92, bold=True))
+        # 8 unidades de fonte para a coluna da tecla. Medido na tela, nao
+        # estimado: "Ctrl+Alt+S" em negrito ocupa cerca de 7, e com 6,2 a
+        # descricao encostava nela.
+        out.append(Label(tx + fonte * 8.0, ty, texto, color=COR_FRACO, size=fonte * 0.92))
+        ty += linha
+
+    if primeira is not None:
+        rodape = (
+            f"o primeiro erro é em {mmss(primeira)}"
+            if primeira > now_ms
+            else f"o próximo erro depois daqui é em {mmss(primeira)}"
+        )
+        out.append(
+            Label(
+                x0 + larg - pad,
+                y0 + altura - pad * 0.7,
+                rodape,
+                color=COR_BOM,
+                size=fonte * 0.88,
+                anchor="se",
+            )
+        )
+    return out
+
+
 def _posicao_em(st: OverlayState, t_ms: int) -> tuple[float, float] | None:
     """Posicao do jogador em foco, interpolada entre frames.
 
@@ -403,11 +548,24 @@ def _minimapa(st: OverlayState, now_ms: int) -> list[Primitive]:
 # --------------------------------------------------------------------------
 
 
-def build(st: OverlayState, now_ms: int) -> Scene:
-    """A cena inteira para este instante."""
+def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
+    """A cena inteira para este instante.
+
+    `boas_vindas` e decidido por quem chama, com relogio de PAREDE — e nao
+    aqui, com o relogio do replay. Os dois nao tem nada a ver um com o outro:
+    a pessoa pode abrir o overlay com o replay parado, e o cartao de
+    apresentacao ainda assim precisa sumir sozinho depois de alguns segundos.
+    Manter a decisao fora daqui e o que deixa esta funcao pura e testavel.
+    """
     sc = Scene()
     sc.add(*_regua(st, now_ms))
     sc.add(*_minimapa(st, now_ms))
+    if boas_vindas:
+        # Ele ocupa o lugar do cartao de erro, e por isso suprime os dois. Nos
+        # primeiros segundos "o que e isto" importa mais que qualquer erro —
+        # e empilhar os dois cobriria o jogo inteiro.
+        sc.add(*_boas_vindas(st, now_ms))
+        return sc
     m = ativa(st, now_ms) if st.show_card else None
     if m is not None:
         ia = sorted(

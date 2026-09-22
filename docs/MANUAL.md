@@ -492,7 +492,15 @@ janela do jogo, sincronizado com o relógio do próprio replay.
 uv run riftcoach overlay "SeuNome#TAG"
 ```
 
-Depois abra o replay no client e dê play. O overlay encontra a janela do jogo sozinho.
+Depois abra o replay no client, dê play — e **clique na janela do jogo**.
+
+> **Esse último passo não é detalhe.** O overlay só desenha por cima do League, e só enquanto o
+> League é a janela ativa. Enquanto você estiver olhando para o terminal ou para a janela do
+> RiftCoach, ele fica escondido **de propósito** — senão ficaria flutuando por cima do navegador
+> enquanto você lê o relatório. Quando você clica no jogo, ele aparece.
+
+Assim que aparecer, um cartão verde confirma que conectou, diz quantos erros existem na partida, o
+que cada cor significa e em que minuto está o primeiro. Ele some sozinho depois de alguns segundos.
 
 #### O que aparece
 

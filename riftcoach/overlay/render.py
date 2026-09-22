@@ -43,6 +43,15 @@ class OverlayWindow:
         win.set_dpi_aware()
         self.root = tk.Tk()
         self.root.title("RiftCoach Overlay")
+        # ESCONDIDA ATE OS ESTILOS ESTAREM POSTOS, e a ordem aqui e o conserto
+        # de um bug que fazia o overlay piscar uma vez e sumir para sempre.
+        #
+        # Uma janela tkinter que aparece antes de receber WS_EX_NOACTIVATE
+        # ativa-se sozinha e vira a janela em primeiro plano. O laco entao
+        # pergunta "o jogo esta na frente?", recebe nao — porque quem esta na
+        # frente e o proprio overlay — e se esconde. Ele se escondia por estar
+        # aparecendo, e nada no log dizia isso.
+        self.root.withdraw()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.configure(bg=COR_TRANSPARENTE)
@@ -66,6 +75,8 @@ class OverlayWindow:
         )
         self.canvas.pack(fill="both", expand=True)
 
+        # Cria o HWND sem mapear a janela: `update_idletasks` numa janela
+        # retirada processa a criacao mas nao a exibicao.
         self.root.update_idletasks()
         self._hwnd = self._descobrir_hwnd()
         if self._hwnd:
@@ -73,7 +84,15 @@ class OverlayWindow:
 
         self._rect: Rect | None = None
         self._fontes: dict[tuple[int, bool], tkfont.Font] = {}
-        self._visivel = True
+        # Comeca escondida de verdade. Antes comecava como `True` sem estar
+        # visivel, e a primeira chamada a `mostrar(True)` virava um no-op.
+        self._visivel = False
+
+    @property
+    def hwnd(self) -> int:
+        """O identificador da janela, para quem precisa perguntar ao Windows
+        sobre ela — o laco usa para nao se confundir com o proprio overlay."""
+        return self._hwnd
 
     def _descobrir_hwnd(self) -> int:
         """O HWND real da janela de topo.
@@ -110,14 +129,23 @@ class OverlayWindow:
         self.root.attributes("-topmost", True)
 
     def mostrar(self, visivel: bool) -> None:
+        """Aparece e some SEM tirar o foco de quem esta usando o computador.
+
+        `deiconify` do tkinter ativa a janela, e ativar a nossa tira o jogo da
+        frente — que e exatamente o estado que faz o laco decidir se esconder.
+        `ShowWindow(SW_SHOWNOACTIVATE)` mostra sem ativar; e o unico jeito.
+        """
         if visivel == self._visivel:
             return
         self._visivel = visivel
+        if not self._hwnd:  # fora do Windows nao ha o que fazer
+            (self.root.deiconify if visivel else self.root.withdraw)()
+            return
         if visivel:
-            self.root.deiconify()
+            win.show_no_activate(self._hwnd)
             self.root.attributes("-topmost", True)
         else:
-            self.root.withdraw()
+            win.hide(self._hwnd)
 
     # ----------------------------------------------------------------
     # Desenho

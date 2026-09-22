@@ -33,12 +33,21 @@ FONTES = ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf")
 FONTES_NEGRITO = ("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf")
 
 
+# O tkinter mede fonte em PONTOS; o PIL, em PIXELS. A 96 dpi um ponto vale
+# 4/3 de pixel, entao sem esta conversao a pre-visualizacao desenha o texto
+# 25% menor do que ele sai na tela de verdade — e passa a mentir exatamente
+# sobre o que ela existe para mostrar. Foi assim que uma sobreposicao de
+# rotulos no cartao passou batida por quatro figuras do manual.
+PONTO_EM_PIXEL = 4 / 3
+
+
 def _fonte(tamanho: float, negrito: bool) -> Any:
     from PIL import ImageFont
 
+    px = max(7, round(tamanho * PONTO_EM_PIXEL))
     for nome in FONTES_NEGRITO if negrito else FONTES:
         try:
-            return ImageFont.truetype(nome, max(7, round(tamanho)))
+            return ImageFont.truetype(nome, px)
         except OSError:
             continue
     return ImageFont.load_default()

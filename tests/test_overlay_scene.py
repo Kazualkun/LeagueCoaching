@@ -129,11 +129,11 @@ def test_sem_duracao_nao_ha_regua() -> None:
 
 
 def test_sem_rastro_nao_desenha_no_minimapa() -> None:
-    st = estado(marca(900))
-    assert st.focus_track == []
-    # Nenhum circulo: o unico circulo da cena vem do minimapa.
     from riftcoach.overlay.scene import Circle
 
+    st = estado(marca(900))
+    st.show_ruler = False  # a regua tambem desenha um circulo: o cursor dela
+    assert st.focus_track == []
     assert not [i for i in build(st, 900_000).items if isinstance(i, Circle)]
 
 
@@ -141,6 +141,7 @@ def test_o_anel_segue_o_jogador_pelo_mapa() -> None:
     from riftcoach.overlay.scene import Circle
 
     st = estado(marca(900))
+    st.show_ruler = False
     st.focus_track = [(0, 1000.0, 1000.0), (600_000, 13000.0, 13000.0)]
 
     cedo = next(i for i in build(st, 0).items if isinstance(i, Circle))
@@ -155,6 +156,7 @@ def test_a_posicao_e_interpolada_entre_frames() -> None:
     from riftcoach.overlay.scene import Circle
 
     st = estado()
+    st.show_ruler = False
     st.focus_track = [(0, 0.0, 0.0), (60_000, 14000.0, 0.0)]
     meio = next(i for i in build(st, 30_000).items if isinstance(i, Circle))
     inicio = next(i for i in build(st, 0).items if isinstance(i, Circle))
@@ -236,3 +238,113 @@ def test_a_navegacao_ignora_as_marcacoes_do_proprio_usuario() -> None:
 
     st = estado(marca(910, autor="user"), marca(1200))
     assert _proxima_marca_depois(st, 900_000) == 1_200_000
+
+
+# --------------------------------------------------------------------------
+# A regua precisa se explicar sozinha
+# --------------------------------------------------------------------------
+
+
+def test_a_regua_diz_de_quem_ela_e_e_quanto_falta() -> None:
+    """Listra colorida sem rotulo nao comunica nada — foi exatamente o que
+    aconteceu na primeira versao, e a pessoa que usou nao entendeu que aquilo
+    era a partida inteira nem o que as cores queriam dizer."""
+    st = estado(marca(600), marca(900), marca(1500))
+    textos = [i.text for i in build(st, 300_000).items if isinstance(i, Label)]
+    assert any("RIFTCOACH" in t for t in textos), "as listras precisam ter dono"
+    assert any("erros" in t for t in textos), "precisa dizer quantos sao"
+    assert any("próximo em" in t for t in textos), "precisa dizer quanto falta"
+
+
+def test_a_regua_conta_quantos_erros_ja_passaram() -> None:
+    st = estado(marca(600), marca(900), marca(1500))
+
+    def placar(now_ms: int) -> str:
+        return next(
+            i.text for i in build(st, now_ms).items if isinstance(i, Label) and "erros" in i.text
+        )
+
+    assert placar(0).startswith("0/3")
+    assert placar(700_000).startswith("1/3")
+    assert placar(1_600_000).startswith("3/3")
+
+
+def test_a_regua_tem_uma_divisao_a_cada_cinco_minutos() -> None:
+    """Sem escala a faixa nao diz que representa tempo. Com ela, diz sozinha."""
+    from riftcoach.overlay.scene import Line as SLine
+
+    st = estado()  # 35 min -> divisoes em 5,10,15,20,25,30,35
+    divisoes = [i for i in build(st, 0).items if isinstance(i, SLine) and i.color == "#30363d"]
+    assert len(divisoes) == 7
+
+
+# --------------------------------------------------------------------------
+# Boas-vindas
+# --------------------------------------------------------------------------
+
+
+def test_o_cartao_de_boas_vindas_explica_as_cores() -> None:
+    """A razao de ele existir: sem legenda, listra colorida e decoracao."""
+    st = estado(marca(900, sev=5), marca(1200, sev=2))
+    textos = [i.text for i in build(st, 0, boas_vindas=True).items if isinstance(i, Label)]
+    assert any("CONECTADO" in t for t in textos)
+    assert any("custou a partida" in t for t in textos)
+    assert any("suas marcações" in t for t in textos)
+    assert any("Ctrl+Alt+S" in t for t in textos)
+
+
+def test_as_boas_vindas_dizem_onde_esta_o_primeiro_erro() -> None:
+    """A pessoa abre o replay no comeco e as marcacoes estao aos 15 minutos.
+    Sem isto, a tela fica corretamente vazia e parece quebrada."""
+    st = estado(marca(900), marca(1200))
+    textos = [i.text for i in build(st, 0, boas_vindas=True).items if isinstance(i, Label)]
+    assert any("15:00" in t for t in textos)
+
+
+def test_as_boas_vindas_tomam_o_lugar_do_cartao_de_erro() -> None:
+    """Nos primeiros segundos, "o que e isto" importa mais que qualquer erro.
+    Empilhar os dois cobriria o jogo inteiro."""
+    # Texto distintivo: "primeiro erro" contem "o erro", e uma busca ingenua
+    # daria falso positivo contra o rodape do proprio cartao de boas-vindas.
+    st = estado(marca(900, sev=5, texto="wave empurrada sem visao"))
+    textos = [i.text for i in build(st, 900_000, boas_vindas=True).items if isinstance(i, Label)]
+    assert any("CONECTADO" in t for t in textos)
+    assert not any("wave empurrada" in t for t in textos)
+
+
+def test_partida_sem_erro_marcado_nao_mente() -> None:
+    st = estado()
+    textos = [i.text for i in build(st, 0, boas_vindas=True).items if isinstance(i, Label)]
+    assert any("nenhum erro marcado" in t for t in textos)
+
+
+# --------------------------------------------------------------------------
+# O overlay nao pode se esconder por estar aparecendo
+# --------------------------------------------------------------------------
+
+
+def test_a_janela_do_proprio_overlay_conta_como_estar_no_jogo() -> None:
+    """A regressao mais cara que este projeto teve ate agora.
+
+    O laco escondia o overlay quando a janela ativa nao era a do jogo. So que
+    a janela ativa podia ser a DO PROPRIO OVERLAY — e entao ele se escondia
+    justamente por estar aparecendo. Piscava uma vez e sumia, sem nenhuma
+    linha de log que denunciasse o motivo.
+    """
+    from riftcoach.overlay.window import pertence_a_revisao
+
+    JOGO, NOSSO, OUTRO = 100, 200, 300
+    assert pertence_a_revisao(JOGO, JOGO, NOSSO) is True
+    assert pertence_a_revisao(NOSSO, JOGO, NOSSO) is True, (
+        "a nossa propria janela nao pode significar 'a pessoa saiu do jogo'"
+    )
+    assert pertence_a_revisao(OUTRO, JOGO, NOSSO) is False
+
+
+def test_sem_janela_nossa_declarada_so_o_jogo_vale() -> None:
+    """O comportamento antigo continua valendo quando nada mais e declarado —
+    quem chama sem informar a propria janela nao ganha permissao extra."""
+    from riftcoach.overlay.window import pertence_a_revisao
+
+    assert pertence_a_revisao(100, 100) is True
+    assert pertence_a_revisao(200, 100) is False

@@ -37,8 +37,11 @@ porque o erro é a decisão, não a consequência.
 
 ### As marcações aparecem dentro do replay
 
-Abra o replay no client do League e o RiftCoach desenha por cima dele — sincronizado com o relógio
-do próprio replay.
+Abra o replay no client do League, dê play e **clique na janela do jogo**. O RiftCoach desenha por
+cima dele, sincronizado com o relógio do próprio replay.
+
+Ele só aparece enquanto o League é a janela ativa — senão ficaria flutuando por cima do navegador
+enquanto você lê o relatório.
 
 ![O cartão do erro, alguns segundos antes de ele acontecer](docs/img/overlay-cartao-critico.jpg)
 

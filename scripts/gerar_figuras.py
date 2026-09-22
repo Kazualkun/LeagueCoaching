@@ -15,6 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from riftcoach.cli import _console_em_utf8
 from riftcoach.core.schema import Mark
 from riftcoach.overlay.preview import gerar
 from riftcoach.overlay.scene import OverlayState, build
@@ -30,7 +31,7 @@ MARCAS = [
         t_ms=4 * 60_000 + 20_000,
         author="ai",
         kind="error",
-        text="recall com 1.180 de ouro sem item completo a vista",
+        text="recall com 1.180 de ouro sem item completo à vista",
         category="recall",
         severity=2,
         wp_loss=1.8,
@@ -39,7 +40,7 @@ MARCAS = [
         t_ms=8 * 60_000 + 45_000,
         author="ai",
         kind="error",
-        text="wave empurrada ate a torre sem visao no rio",
+        text="wave empurrada até a torre sem visão no rio",
         category="wave",
         severity=3,
         wp_loss=3.4,
@@ -55,7 +56,7 @@ MARCAS = [
         author="ai",
         kind="critical",
         text=(
-            "voce empurrou a wave sem visao no rio enquanto o dragao infernal nascia em 40 segundos"
+            "você empurrou a wave sem visão no rio enquanto o dragão infernal nascia em 40 segundos"
         ),
         category="wave",
         severity=5,
@@ -103,22 +104,22 @@ FIGURAS: list[tuple[str, int, str]] = [
     (
         "overlay-cartao-critico.jpg",
         14 * 60_000 + 50_000,
-        "o cartao 4 segundos ANTES do erro critico",
+        "o cartão 4 segundos ANTES do erro crítico",
     ),
     (
         "overlay-agora.jpg",
         14 * 60_000 + 55_000,
-        "o mesmo cartao no instante do erro",
+        "o mesmo cartão no instante do erro",
     ),
     (
         "overlay-sua-marcacao.jpg",
         11 * 60_000,
-        "uma marcacao colocada por voce, com Ctrl+Alt+Q",
+        "uma marcação colocada por você, com Ctrl+Alt+Q",
     ),
     (
         "overlay-regua.jpg",
         18 * 60_000,
-        "so a regua, entre um erro e outro",
+        "só a régua, entre um erro e outro",
     ),
 ]
 
@@ -146,9 +147,9 @@ def figuras_da_janela() -> None:
     App._tarefa = lambda self, fabrica, quando_terminar: None  # type: ignore[method-assign]
 
     telas = {
-        "janela-chave.png": (lambda a: a.tela_chave(), "onde voce cola a chave da Riot"),
-        "janela-conta.png": (lambda a: a.tela_conta(), "onde voce informa o seu Riot ID"),
-        "janela-pronto.png": (_tela_final, "o que fazer com a analise pronta"),
+        "janela-chave.png": (lambda a: a.tela_chave(), "onde você cola a chave da Riot"),
+        "janela-conta.png": (lambda a: a.tela_conta(), "onde você informa o seu Riot ID"),
+        "janela-pronto.png": (_tela_final, "o que fazer com a análise pronta"),
     }
 
     app = App()
@@ -179,6 +180,7 @@ def _tela_final(a: object) -> None:
 
 
 def main() -> None:
+    _console_em_utf8()
     if not FUNDO.exists():
         raise SystemExit(f"fundo nao encontrado: {FUNDO}")
     st = estado()
