@@ -317,6 +317,44 @@ def pin_cert(
     console.print(f"[green]Fixado.[/] [dim]{caminho}[/]")
 
 
+@app.command("enable-replay-api")
+def enable_replay_api_cmd(
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="nao perguntar")] = False,
+) -> None:
+    """Liga a Replay API do League no game.cfg.
+
+    Ela vem DESLIGADA de fabrica — a documentacao da Riot e explicita nisso.
+    Sem ela, /replay/playback devolve 404 e o modo replay nao funciona.
+    """
+    from riftcoach.replay import gamecfg
+
+    cfg = gamecfg.load()
+    if cfg is None:
+        console.print(
+            "[red]Nao encontrei o game.cfg do League.[/]\n"
+            "Defina RIFTCOACH_GAME_CFG com o caminho completo do arquivo."
+        )
+        raise typer.Exit(code=1)
+
+    console.print(f"[dim]{cfg.path}[/]")
+    if cfg.replay_api_enabled:
+        console.print("[green]Ja esta ligada.[/]")
+        return
+
+    console.print(
+        f"Vou adicionar [cyan]{gamecfg.REPLAY_API_KEY}=1[/] na secao "
+        r"\[General]." + "\n"
+        "[dim]Um backup .riftcoach-bak e gravado antes.[/]"
+    )
+    if not yes and not typer.confirm("Alterar o game.cfg?"):
+        console.print("[dim]Nada foi alterado.[/]")
+        raise typer.Exit(code=1)
+
+    backup = gamecfg.enable_replay_api(cfg)
+    console.print(f"[green]Pronto.[/] [dim]backup: {backup}[/]")
+    console.print("Reabra o replay para a mudanca valer.")
+
+
 @app.command()
 def whoami(
     riot_id: Annotated[str, typer.Argument(help="Nome#TAG")],

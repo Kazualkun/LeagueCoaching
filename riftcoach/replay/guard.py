@@ -262,15 +262,37 @@ class ReplayGuard:
             ) from e
 
         if resp.status_code == 404:
-            # O caso mais importante: /replay/* some durante partida ao vivo,
-            # mas /liveclientdata/* continua respondendo. 404 aqui e indicio
-            # POSITIVO de partida em andamento.
+            # 404 aqui tem DUAS causas possiveis, e confundi-las custa caro.
+            #
+            #   a) ha uma partida ao vivo: /replay/* some, /liveclientdata/*
+            #      continua respondendo;
+            #   b) a Replay API esta simplesmente DESLIGADA no game.cfg — que e
+            #      como ela vem de fabrica.
+            #
+            # A versao anterior sempre acusava (a). Como (b) e o estado padrao
+            # de qualquer instalacao, TODO usuario novo recebia um aviso
+            # alarmante de "partida ao vivo em andamento" quando o que faltava
+            # era uma linha de configuracao. Diagnostico errado gasta mais
+            # tempo do usuario do que erro nenhum.
+            #
+            # O comportamento nao muda: 404 continua sendo recusa. So a
+            # explicacao passa a apontar para o lugar certo.
+            from riftcoach.replay.gamecfg import replay_api_status
+
+            habilitada, explicacao = replay_api_status()
+            if habilitada is False:
+                raise LiveGameRefused(
+                    "o client respondeu 404 em /replay/playback — a Replay API "
+                    "do League esta desligada",
+                    hint=explicacao,
+                )
             raise LiveGameRefused(
                 "o client respondeu 404 em /replay/playback — nao ha replay rodando",
                 hint=(
                     "Essa rota some durante uma partida ao vivo. O RiftCoach se "
                     "recusa a continuar: ele nunca roda durante uma partida. "
                     + _HINT_REPLAY
+                    + (f"\n\n[diagnostico] {explicacao}" if habilitada is None else "")
                 ),
             )
 

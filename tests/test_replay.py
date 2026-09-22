@@ -74,13 +74,24 @@ async def test_a_running_replay_is_the_only_thing_that_passes() -> None:
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_a_404_is_treated_as_a_possible_live_game() -> None:
+async def test_a_404_is_treated_as_a_possible_live_game(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """O caso mais importante do modulo.
 
     /replay/* some durante uma partida ao vivo enquanto /liveclientdata/*
     continua respondendo. Um 404 aqui nao e "nao achei a rota" — e indicio
     POSITIVO de que pode haver partida em andamento.
+
+    A Replay API precisa estar LIGADA para este diagnostico valer. Com ela
+    desligada — que e o estado de fabrica — o mesmo 404 tem outra causa, muito
+    mais provavel, e acusar partida ao vivo seria assustar o usuario com o
+    diagnostico errado. Esse outro caminho e coberto em test_gamecfg.py.
     """
+    cfg = tmp_path / "game.cfg"
+    cfg.write_text("[General]\nEnableReplayApi=1\n", encoding="utf-8")
+    monkeypatch.setenv("RIFTCOACH_GAME_CFG", str(cfg))
+
     respx.get(PLAYBACK).mock(return_value=httpx.Response(404))
     with pytest.raises(LiveGameRefused) as ex:
         await _guard().assert_replay_mode()
