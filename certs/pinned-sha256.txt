@@ -1,0 +1,3 @@
+# Impressoes digitais SHA-256 aceitas para o client local do League.
+# Gravadas por `riftcoach pin-cert` apos confirmacao do usuario.
+231788e9b32445b63d92c87931610203e322d8eadc65d21773707d78a6c93b2c

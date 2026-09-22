@@ -137,6 +137,71 @@ BY_NAME = {r.name: r for r in ALL}
 OCR_ROIS: tuple[Roi, ...] = (GAME_CLOCK, CS, GOLD, KDA)
 
 
+# --------------------------------------------------------------------------
+# A HUD de ESPECTADOR (replay)
+# --------------------------------------------------------------------------
+#
+# DESCOBERTA QUE INVALIDOU UMA PREMISSA: assistir um replay coloca voce em modo
+# ESPECTADOR, cujo layout nao tem quase nada a ver com o do jogador.
+#
+#   jogador                          espectador
+#   relogio no canto superior DIR    relogio no topo ao CENTRO
+#   ouro e CS proprios embaixo       placar dos 10 jogadores embaixo
+#   barra de habilidades             nao existe
+#   vida do proprio campeao          nao existe
+#
+# Medido contra print real (1600x900, replay aos 14:39). Com o perfil de
+# jogador, o ROI do relogio caia em cima do contador de FPS e lia "D"; o de KDA
+# lia "FPS: | 31". Tudo errado, e errado em silencio.
+#
+# Isto importa mais do que parece: no Modo B (replay sincronizado) o usuario
+# esta SEMPRE em espectador. Este e o perfil primario dali, e o de jogador so
+# serve para o Modo C, com gravacao da propria tela em jogo.
+
+SPEC_GAME_CLOCK = Roi(
+    "game_clock", Anchor.TOP_CENTER, dx=0.004, dy=0.067, w=0.053, h=0.026
+)
+SPEC_TEAM_GOLD_LEFT = Roi(
+    "team_gold_left", Anchor.TOP_CENTER, dx=-0.124, dy=0.014, w=0.060, h=0.021
+)
+SPEC_TEAM_GOLD_RIGHT = Roi(
+    "team_gold_right", Anchor.TOP_CENTER, dx=0.164, dy=0.014, w=0.060, h=0.021
+)
+SPEC_MINIMAP = Roi(
+    "minimap", Anchor.BOTTOM_RIGHT, dx=0.006, dy=0.011, w=0.239, h=0.239
+)
+
+SPECTATOR_ALL: tuple[Roi, ...] = (
+    SPEC_GAME_CLOCK,
+    SPEC_TEAM_GOLD_LEFT,
+    SPEC_TEAM_GOLD_RIGHT,
+    SPEC_MINIMAP,
+)
+SPECTATOR_OCR: tuple[Roi, ...] = (
+    SPEC_GAME_CLOCK,
+    SPEC_TEAM_GOLD_LEFT,
+    SPEC_TEAM_GOLD_RIGHT,
+)
+
+
+@dataclass(frozen=True)
+class HudProfile:
+    """Um layout de HUD inteiro. O modo escolhe qual usar."""
+
+    name: str
+    rois: tuple[Roi, ...]
+    ocr: tuple[Roi, ...]
+    clock: Roi
+
+    def by_name(self, nome: str) -> Roi | None:
+        return next((r for r in self.rois if r.name == nome), None)
+
+
+PLAYER = HudProfile("player", ALL, OCR_ROIS, GAME_CLOCK)
+SPECTATOR = HudProfile("spectator", SPECTATOR_ALL, SPECTATOR_OCR, SPEC_GAME_CLOCK)
+PROFILES = {p.name: p for p in (PLAYER, SPECTATOR)}
+
+
 def aspect_ratio(width: int, height: int) -> float:
     return width / height
 

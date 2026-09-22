@@ -89,15 +89,25 @@ def parse_clock(text: str) -> int | None:
         return None
     limpo = text.strip().translate(_CONFUSIONS)
 
+    # O SEPARADOR E OBRIGATORIO.
+    #
+    # A versao anterior tentava recuperar "dois-pontos perdido" tratando
+    # qualquer 3-4 digitos como MMSS. Medido contra um print real de replay,
+    # isso aceitava como horario:
+    #
+    #     "FPS:31" -> 5:31     "124"   -> 1:24
+    #     "0/1/1"  -> 0:11     "29.2k0"-> 29:20
+    #
+    # Ou seja: contagem de CS, ouro do time e ate o contador de FPS viravam
+    # relogio. Numa varredura de calibracao isso injeta dezenas de leituras
+    # falsas, e a mediana so aguenta outlier enquanto ele for minoria.
+    #
+    # O custo de exigir o separador e nao recuperar um dois-pontos realmente
+    # perdido. Isso e barato: a leitura vira None, e descartar uma amostra de
+    # vinte nao machuca. Aceitar uma leitura falsa, sim.
     m = _CLOCK_RE.match(limpo)
     if m is None:
-        # Dois-pontos perdido na leitura: 'MMSS' ainda e recuperavel, porque a
-        # posicao dos segundos e fixa.
-        so_digitos = re.sub(r"\D", "", limpo)
-        if len(so_digitos) in (3, 4):
-            m = _CLOCK_RE.match(f"{so_digitos[:-2]}:{so_digitos[-2:]}")
-        if m is None:
-            return None
+        return None
 
     minutos, segundos = int(m.group(1)), int(m.group(2))
     # Segundo >= 60 e o sinal mais forte de leitura errada que existe aqui:

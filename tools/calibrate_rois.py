@@ -17,12 +17,26 @@ recorte esta errado e TODO o modo video sairia deslocado no tempo.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 from riftcoach.vision import rois
 from riftcoach.vision.ocr import parse_clock, read_text
+
+
+def seguro(texto: str) -> str:
+    """Texto imprimivel no console atual.
+
+    O OCR as vezes devolve CJK ao tentar ler um recorte que nao tem texto, e o
+    console do Windows (cp1252) estoura com UnicodeEncodeError. Perder a
+    ferramenta de calibracao por causa da codificacao do terminal seria
+    ridiculo.
+    """
+    cod = sys.stdout.encoding or "utf-8"
+    return texto.encode(cod, errors="replace").decode(cod, errors="replace")
+
 
 CORES = {
     "game_clock": (255, 80, 80),
@@ -54,28 +68,36 @@ def main() -> None:
     ap.add_argument("caminho", type=Path, help="print da partida ou arquivo de video")
     ap.add_argument("--scale", type=float, default=1.0, help="escala de HUD do jogo")
     ap.add_argument("--at", type=float, default=None, help="instante, se for video")
+    ap.add_argument(
+        "--profile", choices=sorted(rois.PROFILES), default="spectator",
+        help="espectador (replay) ou jogador (gravacao da propria tela)",
+    )
     args = ap.parse_args()
 
     img = carregar(args.caminho, args.at)
     w, h = img.size
-    print(f"=== {args.caminho.name} · {w}x{h} · escala {args.scale} ===")
+    perfil = rois.PROFILES[args.profile]
+    print(
+        f"=== {args.caminho.name} · {w}x{h} · escala {args.scale} "
+        f"· perfil {perfil.name} ==="
+    )
     if rois.is_ultrawide(w, h):
         print("  [ultrawide] a HUD fica ancorada nos cantos; confira as bordas\n")
 
     marcado = img.copy()
     d = ImageDraw.Draw(marcado)
 
-    for r in rois.ALL:
+    for r in perfil.rois:
         caixa = r.pixels(w, h, args.scale)
         cor = CORES.get(r.name, (255, 255, 255))
         d.rectangle(caixa, outline=cor, width=2)
         d.text((caixa[0], max(0, caixa[1] - 12)), r.name, fill=cor)
 
-        if r in rois.OCR_ROIS:
+        if r in perfil.ocr:
             leituras = read_text(img, r, scale=args.scale)
-            texto = " | ".join(x.clean for x in leituras) or "(nada)"
+            texto = " | ".join(seguro(x.clean) for x in leituras) or "(nada)"
             extra = ""
-            if r is rois.GAME_CLOCK:
+            if r is perfil.clock:
                 s = next(
                     (v for v in (parse_clock(x.clean) for x in leituras) if v is not None),
                     None,
@@ -89,7 +111,7 @@ def main() -> None:
         else:
             print(f"  {r.name:<12} {caixa!s:<28} (sem OCR)")
 
-    saida = args.caminho.with_name(f"{args.caminho.stem}-rois.png")
+    saida = args.caminho.with_name(f"{args.caminho.stem}-rois-{perfil.name}.png")
     marcado.save(saida)
     print(f"\nimagem marcada: {saida}")
     print(

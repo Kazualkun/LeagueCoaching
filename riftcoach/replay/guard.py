@@ -39,6 +39,8 @@ Ver COMPLIANCE.md e docs/03-vod-review.md, 3.4.
 
 from __future__ import annotations
 
+import hashlib
+import socket
 import ssl
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +60,10 @@ PROBE_TIMEOUT_S = 2.0
 REQUEST_TIMEOUT_S = 5.0
 
 CERT_NAME = "riotgames.pem"
+# Impressoes digitais aceitas alem da do pem embarcado. Preenchido pelo
+# usuario via `riftcoach pin-cert`, depois de ele confirmar que o replay e
+# dele. Nao vem preenchido: fixar cego seria o mesmo que nao verificar.
+PINNED_NAME = "pinned-sha256.txt"
 
 _HINT_REPLAY = (
     "Abra o client do League, va no seu historico de partidas, baixe o replay "
@@ -71,24 +77,106 @@ def cert_path() -> Path:
     return Path(__file__).resolve().parents[2] / "certs" / CERT_NAME
 
 
-def _ssl_context() -> ssl.SSLContext:
-    """Contexto TLS fixado no certificado da Riot.
+def pinned_path() -> Path:
+    """Impressoes digitais aceitas, uma por linha."""
+    return Path(__file__).resolve().parents[2] / "certs" / PINNED_NAME
 
-    Se o arquivo sumir, levantamos em vez de cair para `verify=False`. Essa
-    degradacao seria silenciosa e derrubaria justamente a protecao contra MITM
-    local — e um app que promete nao vazar dados nao pode ter esse caminho.
-    """
-    caminho = cert_path()
-    if not caminho.exists():
+
+def fingerprint_of_pem(caminho: Path) -> str | None:
+    try:
+        return hashlib.sha256(
+            ssl.PEM_cert_to_DER_cert(caminho.read_text(encoding="utf-8"))
+        ).hexdigest()
+    except Exception:
+        return None
+
+
+def pinned_fingerprints() -> set[str]:
+    """Tudo que aceitamos: o pem embarcado mais o que o usuario fixou."""
+    out: set[str] = set()
+    if (fp := fingerprint_of_pem(cert_path())) is not None:
+        out.add(fp)
+    arquivo = pinned_path()
+    if arquivo.exists():
+        for linha in arquivo.read_text(encoding="utf-8").splitlines():
+            limpa = linha.split("#")[0].strip().lower().replace(":", "")
+            if len(limpa) == 64:
+                out.add(limpa)
+    return out
+
+
+def peer_fingerprint(timeout_s: float = PROBE_TIMEOUT_S) -> str:
+    """SHA-256 do certificado que o client apresenta AGORA."""
+    contexto = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    contexto.check_hostname = False
+    contexto.verify_mode = ssl.CERT_NONE
+    with (
+        socket.create_connection((HOST, PORT), timeout=timeout_s) as sock,
+        contexto.wrap_socket(sock, server_hostname=HOST) as tls,
+    ):
+        der = tls.getpeercert(binary_form=True)
+    if not der:
         raise LiveGameRefused(
-            f"certificado {CERT_NAME} nao encontrado em {caminho}",
-            hint=(
-                "O RiftCoach fixa o certificado publicado pela Riot em vez de "
-                "desabilitar a verificacao TLS. Reinstale o pacote ou restaure "
-                "o arquivo certs/riotgames.pem."
-            ),
+            "o client nao apresentou certificado TLS",
+            hint=_HINT_REPLAY,
         )
-    return ssl.create_default_context(cafile=str(caminho))
+    return hashlib.sha256(der).hexdigest()
+
+
+def assert_pinned_certificate() -> str:
+    """Confere a impressao digital do client contra as aceitas.
+
+    POR QUE IMPRESSAO DIGITAL E NAO CADEIA DE CONFIANCA. A versao anterior
+    passava `certs/riotgames.pem` como CA para o OpenSSL. Isso NUNCA funcionou
+    em Python moderno, por dois motivos somados:
+
+      - o OpenSSL 3.x recusa esse certificado com "Missing Authority Key
+        Identifier", porque ele nao traz as extensoes que a construcao de
+        cadeia passou a exigir;
+      - o certificado apresentado pelo client local nem e o mesmo do arquivo.
+
+    O resultado era o guard recusando para TODO usuario, com a mensagem
+    "o client nao esta respondendo" — enganosa, porque ele estava respondendo.
+    O modo replay inteiro ficava inutilizavel e o erro apontava para o lugar
+    errado.
+
+    Para um unico endpoint conhecido em localhost, comparar a impressao digital
+    e mais forte que validar cadeia: nao depende de CA nenhuma e nao tem como
+    ser contornado por um certificado assinado por outra autoridade.
+    """
+    apresentado = peer_fingerprint()
+    aceitos = pinned_fingerprints()
+    if apresentado in aceitos:
+        return apresentado
+    raise LiveGameRefused(
+        f"o certificado do client nao confere com nenhum fixado "
+        f"(apresentado sha256:{apresentado[:16]}...)",
+        hint=(
+            "O RiftCoach fixa o certificado em vez de desabilitar a verificacao "
+            "TLS. Se este e o seu client do League, rode `riftcoach pin-cert` "
+            "para conferir e registrar esta impressao digital. Se voce NAO "
+            "iniciou um replay agora, nao fixe: outra coisa esta atendendo na "
+            f"porta {PORT}."
+        ),
+    )
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Contexto usado DEPOIS de a impressao digital ja ter sido conferida.
+
+    A verificacao de cadeia fica desligada de proposito, e nao por desleixo: o
+    certificado e autoassinado e a garantia vem de `assert_pinned_certificate`,
+    que e mais forte aqui. Ligar as duas so faria o handshake falhar sempre.
+
+    Limitacao declarada: a conferencia e uma pre-checagem, entao existe uma
+    janela entre ela e as requisicoes seguintes. Em `127.0.0.1`, explorar essa
+    janela exige execucao de codigo local — e nesse cenario o TLS ja nao e a
+    defesa que importa.
+    """
+    contexto = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    contexto.check_hostname = False
+    contexto.verify_mode = ssl.CERT_NONE
+    return contexto
 
 
 @dataclass(frozen=True)
@@ -249,10 +337,18 @@ class ReplayGuard:
 async def open_guard() -> tuple[httpx.AsyncClient, ReplayGuard]:
     """Abre o unico cliente autorizado a falar com o client do League.
 
-    Quem chama e dono do `AsyncClient` e precisa fecha-lo. A funcao devolve os
-    dois de propósito: esconder o cliente dentro do guard tentaria contribuintes
-    a criar outro para "so um GET rapido".
+    A impressao digital do certificado e conferida ANTES de qualquer
+    requisicao. Quem chama e dono do `AsyncClient` e precisa fecha-lo. A funcao
+    devolve os dois de propósito: esconder o cliente dentro do guard tentaria
+    contribuintes a criar outro para "so um GET rapido".
     """
+    try:
+        assert_pinned_certificate()
+    except (TimeoutError, OSError) as e:
+        raise LiveGameRefused(
+            f"o client do League nao esta respondendo em {HOST}:{PORT}",
+            hint=_HINT_REPLAY,
+        ) from e
     client = httpx.AsyncClient(verify=_ssl_context(), timeout=REQUEST_TIMEOUT_S)
     return client, ReplayGuard(client)
 

@@ -50,7 +50,6 @@ def test_parses_a_clean_clock(texto: str, esperado: int) -> None:
         ("l4:22", 862),   # L minusculo
         ("14.22", 862),   # ponto no lugar de dois-pontos
         ("14 : 22", 862), # espacos sobrando
-        ("1422", 862),    # dois-pontos perdido
         ("S:30", 330),    # S lido no lugar de 5
     ],
 )
@@ -61,6 +60,45 @@ def test_recovers_from_common_ocr_confusions(texto: str, esperado: int) -> None:
     trocas seguras em vez de chute.
     """
     assert parse_clock(texto) == esperado
+
+
+@pytest.mark.parametrize(
+    ("texto", "era"),
+    [
+        ("FPS:31", "contador de FPS"),
+        ("124", "CS de um jogador no placar"),
+        ("0/1/1", "KDA de um jogador"),
+        ("29.2k0", "ouro do time"),
+        ("1422", "quatro digitos sem separador"),
+        # O sinal de multiplicacao aqui e proposital: foi exatamente o que o
+        # OCR devolveu ao ler o placar de abates. Trocar por 'x' faria o teste
+        # deixar de reproduzir a entrada real.
+        ("8 × 14", "placar de abates dos times"),  # noqa: RUF001
+    ],
+)
+def test_refuses_numbers_that_are_not_clocks(texto: str, era: str) -> None:
+    """Regressao medida contra um print REAL de replay.
+
+    A versao anterior tentava recuperar "dois-pontos perdido" tratando qualquer
+    3-4 digitos como MMSS. Rodando contra a tela de verdade, ela aceitava como
+    horario TODOS os casos acima — contagem de CS, KDA, ouro do time e ate o
+    contador de FPS.
+
+    Numa varredura de calibracao isso injetaria dezenas de leituras falsas, e a
+    mediana so aguenta outlier enquanto ele for minoria. O separador passou a
+    ser obrigatorio.
+    """
+    assert parse_clock(texto) is None, f"aceitou {era!r} como relogio"
+
+
+def test_a_lost_colon_is_the_accepted_cost() -> None:
+    """O preco de exigir o separador, declarado.
+
+    Um dois-pontos realmente perdido pelo OCR deixa de ser recuperado. Isso e
+    barato: a amostra vira None e descartar uma de vinte nao machuca. Aceitar
+    uma leitura falsa, sim.
+    """
+    assert parse_clock("1439") is None
 
 
 @pytest.mark.parametrize("texto", ["14:75", "14:60", "99:99"])

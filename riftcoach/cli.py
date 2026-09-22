@@ -265,6 +265,58 @@ def sync_match_patches() -> None:
     _run(main())
 
 
+@app.command("pin-cert")
+def pin_cert(
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="pula a confirmacao (para scripts)")
+    ] = False,
+) -> None:
+    """Registra a impressao digital do certificado do client do League.
+
+    O RiftCoach fixa o certificado em vez de desabilitar a verificacao TLS. O
+    certificado e autoassinado e varia por instalacao, entao nao vem embarcado:
+    fixar cego seria o mesmo que nao verificar nada.
+    """
+    from riftcoach.replay import guard
+
+    try:
+        atual = guard.peer_fingerprint()
+    except OSError:
+        console.print(
+            f"[red]Nada respondendo em {guard.HOST}:{guard.PORT}.[/]\n"
+            "Abra um replay no client do League e tente de novo."
+        )
+        raise typer.Exit(code=1) from None
+
+    if atual in guard.pinned_fingerprints():
+        console.print(f"[green]Ja fixado[/] sha256:{atual[:16]}...")
+        return
+
+    console.print(f"Certificado apresentado: [cyan]sha256:{atual}[/]")
+    console.print(
+        "\n[yellow]Confirme antes de fixar.[/] Isto so e seguro se VOCE acabou "
+        "de iniciar um replay. Se voce nao iniciou, outra coisa esta atendendo "
+        f"na porta {guard.PORT} e fixar daria a ela acesso permanente."
+    )
+    if not yes and not typer.confirm("Fixar esta impressao digital?"):
+        console.print("[dim]Nada foi gravado.[/]")
+        raise typer.Exit(code=1)
+
+    caminho = guard.pinned_path()
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    novo = not caminho.exists() or not caminho.stat().st_size
+    with caminho.open("a", encoding="utf-8") as f:
+        if novo:
+            f.write(
+                "# Impressoes digitais SHA-256 aceitas para o client local do "
+                "League.\n"
+                "# Gravadas por `riftcoach pin-cert` apos confirmacao do "
+                "usuario.\n"
+            )
+        f.write(f"{atual}\n")
+    console.print(f"[green]Fixado.[/] [dim]{caminho}[/]")
+
+
 @app.command()
 def whoami(
     riot_id: Annotated[str, typer.Argument(help="Nome#TAG")],
