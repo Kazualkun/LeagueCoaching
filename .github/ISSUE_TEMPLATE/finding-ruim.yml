@@ -1,0 +1,68 @@
+name: "Finding ruim (conselho errado do coach)"
+description: O coach te deu um conselho incorreto. Este é o relato mais útil que o projeto recebe.
+title: "[finding] "
+labels: ["finding-ruim"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado. Como cada afirmação carrega a evidência e o nível dela, este tipo de relato é de
+        fato diagnosticável — dá para separar erro de **medição** (bug no parser), de **premissa**
+        (heurística T2 errada) e de **julgamento** (prompt ruim).
+
+        O relatório não contém PUUID nem nada que te identifique, então pode colar inteiro.
+
+  - type: textarea
+    id: relatorio
+    attributes:
+      label: O relatório completo
+      description: Cole a saída inteira de `riftcoach analyze`, não só o finding problemático.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: qual
+    attributes:
+      label: Qual finding está errado?
+      placeholder: "#2 · gravidade 4 · 18:40 · macro"
+    validations:
+      required: true
+
+  - type: textarea
+    id: porque
+    attributes:
+      label: Por que ele está errado?
+      description: |
+        A sua leitura da situação. Isto é a parte insubstituível do relato — o que você sabia
+        naquele momento e que os dados não mostram.
+      placeholder: |
+        Ele diz que eu deveria ter rotacionado para o dragão, mas a wave estava crashando na minha
+        torre e sair custaria a wave inteira mais a placa. O trade correto era ficar.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: Se você tiver um palpite, que tipo de erro é?
+      options:
+        - Não sei / não tenho palpite
+        - Medição — o número em si está errado
+        - Premissa — a evidência é T2 e a premissa não vale neste caso
+        - Julgamento — os fatos estão certos, a conclusão não
+    validations:
+      required: false
+
+  - type: input
+    id: match_id
+    attributes:
+      label: Match ID (opcional)
+      description: Ajuda muito a reproduzir. Só inclua se não se importar de compartilhar.
+      placeholder: BR1_3012345678
+
+  - type: input
+    id: versao
+    attributes:
+      label: Versão / commit
+      description: "Saída de `uv run riftcoach --version`, ou o hash do commit."

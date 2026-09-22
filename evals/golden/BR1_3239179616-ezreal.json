@@ -1,0 +1,48 @@
+{
+  "match_id": "BR1_3239179616",
+  "puuid": "ad8e135edf4ca71e",
+  "annotator": "seed",
+  "notes": "Ezreal ADC vs Tristana, 10/8/8, derrota de 35 min. KDA positivo e rota perdida: -1325 de ouro aos 10 minutos e tres mortes na rota de baixo antes dos 13. Depois, tres mortes seguidas em janela de objetivo. Zero sentinelas de controle em 16 recalls. ANOTACAO-SEMENTE, precisa de revisao da comunidade.",
+  "findings": [
+    {
+      "category": "trading",
+      "timestamp_ms": 261942,
+      "severity": 3,
+      "summary": "Segunda morte na rota de baixo antes dos 5 minutos, as duas para Tristana e Nautilus juntos.",
+      "why_it_matters": "Definiu a rota: -1325 de ouro aos 10 minutos, o pior numero da partida dele.",
+      "actionability_manual": null
+    },
+    {
+      "category": "macro",
+      "timestamp_ms": 890061,
+      "severity": 4,
+      "summary": "Morreu na rota de baixo com o Dragao a 23 segundos de nascer.",
+      "why_it_matters": "Primeira das tres mortes em janela de objetivo. O padrao se repete aos 24:56 e 32:20.",
+      "actionability_manual": null
+    },
+    {
+      "category": "macro",
+      "timestamp_ms": 1496494,
+      "severity": 4,
+      "summary": "Morreu no meio para quatro inimigos com o Barao a 25 segundos de nascer.",
+      "why_it_matters": "O Barao caiu 25 segundos depois. Estar no meio, exposto, com um epico prestes a nascer e o erro mais caro do kit de macro.",
+      "actionability_manual": null
+    },
+    {
+      "category": "recall",
+      "timestamp_ms": 1940493,
+      "severity": 3,
+      "summary": "Morreu com o Barao a 38 segundos de nascer, carregando 1034 de ouro nao gastos.",
+      "why_it_matters": "Dois erros na mesma morte: o ouro parado e a posicao na janela do objetivo.",
+      "actionability_manual": null
+    },
+    {
+      "category": "vision",
+      "timestamp_ms": 1521748,
+      "severity": 3,
+      "summary": "Barao perdido sem nenhuma ward dele no minuto anterior — e zero sentinelas de controle em 16 recalls na partida inteira.",
+      "why_it_matters": "Sentinela de Controle e a compra com melhor retorno por ouro do jogo. Zero em 16 recalls e erro de checklist, o mais barato de corrigir que existe.",
+      "actionability_manual": null
+    }
+  ]
+}

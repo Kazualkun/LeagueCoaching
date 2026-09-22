@@ -1,0 +1,69 @@
+name: CI
+
+# Os tres comandos que o CONTRIBUTING.md exige, nada alem disso.
+# Nenhum job aqui toca a rede da Riot: as fixtures em tests/fixtures/ sao
+# partidas reais anonimizadas, entao o CI roda sem segredo nenhum configurado.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ruff · mypy · pytest (py${{ matrix.python }} · ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows entra na matriz de proposito: a maior parte dos jogadores de
+        # LoL esta la, e e onde caminhos e encoding quebram primeiro.
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sincronizar dependencias
+        run: uv sync --all-extras --dev --python ${{ matrix.python }}
+
+      - name: ruff
+        run: uv run ruff check --output-format=github .
+
+      - name: mypy --strict
+        run: uv run mypy
+
+      - name: pytest
+        # RIFTCOACH_HOME isola o cache e o banco de patch do runner: sem isso os
+        # testes escreveriam no diretorio home do agente.
+        env:
+          RIFTCOACH_HOME: ${{ runner.temp }}/riftcoach
+        run: uv run pytest -q
+
+      - name: avaliacao (linha de base)
+        # Roda so a linha de base deterministica — sem chave, sem rede, sem
+        # modelo. O numero vai para o log do job de proposito: uma regressao no
+        # motor de regras fica visivel no PR em vez de ser descoberta por um
+        # usuario tres semanas depois.
+        #
+        # A matriz COM provedores nao roda aqui: ela exige chave, e cota de
+        # tier gratuito nao aguenta uma matriz por push. Ela e publicada por
+        # quem roda `--with-ai --save` localmente.
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        env:
+          RIFTCOACH_HOME: ${{ runner.temp }}/riftcoach
+        run: uv run python evals/run.py

@@ -1,0 +1,40 @@
+{
+  "match_id": "BR1_3239179616",
+  "puuid": "586f5d9bdd669ee7",
+  "annotator": "seed",
+  "notes": "Garen TOP vs Vladimir, 4/9/1, derrota de 35 min. A partida vira entre 18 e 26 minutos: quatro objetivos epicos perdidos nessa janela, com o jogador do lado errado do mapa em tres deles. ANOTACAO-SEMENTE: feita a partir do que a telemetria mostra sem ambiguidade, nao por um revisor de elo alto. Precisa de revisao da comunidade — ver evals/golden/README.md.",
+  "findings": [
+    {
+      "category": "macro",
+      "timestamp_ms": 1095657,
+      "severity": 4,
+      "summary": "Morreu sozinho na propria selva de cima, para o Vladimir, com o Arauto a 32 segundos de nascer.",
+      "why_it_matters": "O Arauto caiu 32 segundos depois, com ele ainda na base. Foi o primeiro dos quatro objetivos perdidos na janela que decidiu a partida.",
+      "actionability_manual": null
+    },
+    {
+      "category": "recall",
+      "timestamp_ms": 1441549,
+      "severity": 4,
+      "summary": "Morreu na rota de baixo carregando 3688 de ouro nao gastos.",
+      "why_it_matters": "Ouro parado nao da forca nenhuma e ainda virou bounty. Com 12 recalls na partida, faltou usar um deles.",
+      "actionability_manual": null
+    },
+    {
+      "category": "objective",
+      "timestamp_ms": 1521748,
+      "severity": 4,
+      "summary": "Barao perdido com ele no meio da propria rota e nenhuma ward dele no minuto anterior.",
+      "why_it_matters": "Nenhuma das seis perdas de objetivo epico teve visao previa dele — este e o padrao central da partida, nao um caso isolado.",
+      "actionability_manual": null
+    },
+    {
+      "category": "decision",
+      "timestamp_ms": 1017763,
+      "severity": 3,
+      "summary": "Terceira morte solo para o Vladimir, desta vez no river de cima, ja estando atras.",
+      "why_it_matters": "Aos 7:24, 13:36 e 16:57 ele morreu para o mesmo adversario com zero ou um aliado por perto. O matchup ja estava perdido e ele continuou disputando sozinho.",
+      "actionability_manual": null
+    }
+  ]
+}

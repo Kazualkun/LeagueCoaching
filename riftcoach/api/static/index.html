@@ -1,0 +1,366 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RiftCoach AI</title>
+
+<!--
+  DESVIO CONSCIENTE DO PLANO (docs/05-stack-and-repo.md, 5.3).
+
+  O plano pede Vite + React + TypeScript. Isto aqui e um arquivo so, sem build.
+
+  O motivo e o proprio argumento do plano: ele escolheu navegador antes de
+  Tauri porque "funciona desde o primeiro dia sem toolchain extra". React e
+  Vite ADICIONAM uma toolchain — node no CI, dist commitado ou passo de build
+  antes do `uv run riftcoach`, e mais uma coisa para um contribuidor instalar
+  antes de mudar uma cor.
+
+  Para a complexidade real desta tela — um relatorio, uma curva, uma lista
+  clicavel — nada disso se paga. Se a UI crescer (comparar partidas, editar
+  anotacoes, player de video do Modo C), a troca por React vira a decisao
+  certa e nada aqui atrapalha: o backend ja serve JSON em /api/.
+-->
+
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1420;
+    --surface: #141d2b;
+    --surface-2: #1b2637;
+    --line: #253449;
+    --ink: #e6edf5;
+    --ink-dim: #8fa3ba;
+    --ink-faint: #5d7089;
+    --accent: #48b0d4;
+    --gold: #c8a24a;
+    --sev5: #e05260;
+    --sev4: #e0803f;
+    --sev3: #d9b04a;
+    --sev2: #6d88a8;
+    --win: #45b37a;
+    --loss: #e05260;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 0 0 4rem;
+  }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+
+  /* ---- cabecalho ---- */
+  header {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+    padding: 26px 0 22px;
+    margin-bottom: 28px;
+  }
+  .brand {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 10px;
+  }
+  .matchline { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .champ { font-size: 26px; font-weight: 650; letter-spacing: -.01em; }
+  .vs { color: var(--ink-faint); }
+  .kda { font-family: var(--mono); font-size: 17px; color: var(--ink-dim); }
+  .result { font-weight: 650; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  .result.win { color: var(--win); }
+  .result.loss { color: var(--loss); }
+  .meta {
+    margin-top: 10px; font-family: var(--mono); font-size: 12.5px;
+    color: var(--ink-faint); display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    border: 1px solid var(--line); font-size: 11px; letter-spacing: .05em;
+  }
+  .badge.ai { border-color: #2e5f74; color: var(--accent); }
+  .badge.noai { border-color: var(--line); color: var(--ink-faint); }
+
+  /* ---- curva ---- */
+  .curve { margin-bottom: 32px; }
+  .curve svg { width: 100%; height: 130px; display: block; }
+  .curve-label {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint);
+    display: flex; justify-content: space-between; margin-top: 4px;
+  }
+  .marker { cursor: pointer; }
+  .marker:hover circle { r: 6; }
+
+  /* ---- secoes ---- */
+  h2 {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 600;
+    margin: 34px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  }
+
+  /* ---- findings ---- */
+  .finding {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--sev2);
+    border-radius: 4px; padding: 16px 18px; margin-bottom: 12px;
+  }
+  .finding.top { background: var(--surface-2); }
+  .finding[data-sev="5"] { border-left-color: var(--sev5); }
+  .finding[data-sev="4"] { border-left-color: var(--sev4); }
+  .finding[data-sev="3"] { border-left-color: var(--sev3); }
+
+  .fhead {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+    margin-bottom: 8px;
+  }
+  .rank { color: var(--ink-dim); font-weight: 650; }
+  .sev { font-weight: 650; }
+  .finding[data-sev="5"] .sev { color: var(--sev5); }
+  .finding[data-sev="4"] .sev { color: var(--sev4); }
+  .finding[data-sev="3"] .sev { color: var(--sev3); }
+  .cat { color: var(--gold); letter-spacing: .06em; text-transform: uppercase; }
+
+  .claim { font-size: 16px; line-height: 1.45; margin-bottom: 12px; }
+
+  .ev { margin: 0 0 12px; padding: 0; list-style: none; }
+  .ev li {
+    font-size: 13.5px; color: var(--ink-dim); padding: 5px 0 5px 11px;
+    border-left: 2px solid var(--line); margin-bottom: 2px;
+  }
+  /* Os tres niveis precisam ser distinguiveis SEM ler o rotulo: e a
+     informacao mais importante da tela para decidir o quanto confiar. */
+  .ev li.t1 { border-left-style: solid; border-left-color: #3d6b52; }
+  .ev li.t2 { border-left-style: dashed; border-left-color: #6b5c33; }
+  .ev li.t3 { border-left-style: dotted; border-left-color: #6b3d3d; }
+  .tier {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+    margin-right: 7px;
+  }
+  .assumption {
+    display: block; margin-top: 3px; font-size: 12.5px;
+    color: var(--ink-faint); font-style: italic;
+  }
+
+  .fix { font-size: 14px; margin-bottom: 8px; }
+  .fix b, .drill b { color: var(--ink-dim); font-weight: 600; }
+  .drill { font-size: 13.5px; color: var(--ink-dim); margin-bottom: 12px; }
+
+  button.seek {
+    background: transparent; color: var(--accent);
+    border: 1px solid #2e5f74; border-radius: 3px;
+    padding: 6px 13px; font-size: 13px; font-family: inherit; cursor: pointer;
+  }
+  button.seek:hover:not(:disabled) { background: #16303c; }
+  button.seek:disabled { color: var(--ink-faint); border-color: var(--line); cursor: not-allowed; }
+  .seekmsg { font-size: 12.5px; color: var(--ink-faint); margin-left: 10px; }
+  .seekmsg.err { color: var(--sev4); }
+
+  /* ---- benchmarks ---- */
+  .bench { display: grid; gap: 8px; }
+  .brow {
+    display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 4px; padding: 10px 14px;
+  }
+  .bname { font-size: 13.5px; }
+  .bnum { font-family: var(--mono); font-size: 13px; color: var(--ink-dim); }
+  .bbar { grid-column: 1 / -1; height: 3px; background: var(--line); border-radius: 2px; }
+  .bfill { height: 100%; border-radius: 2px; background: var(--sev2); }
+  .brow.weak .bfill { background: var(--sev4); }
+  .brow.strong .bfill { background: var(--win); }
+  .bsrc { font-size: 11.5px; color: var(--ink-faint); grid-column: 1 / -1; }
+
+  .note {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 4px; padding: 14px 16px; font-size: 13.5px; color: var(--ink-dim);
+  }
+  .note code { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+  .empty { color: var(--ink-faint); padding: 40px 0; text-align: center; }
+
+  @media (max-width: 560px) {
+    .champ { font-size: 21px; }
+    .wrap { padding: 0 14px; }
+  }
+</style>
+
+<header>
+  <div class="wrap">
+    <div class="brand">RiftCoach AI</div>
+    <div id="head"><div class="empty">carregando…</div></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="curve" id="curve"></div>
+  <div id="replaybox"></div>
+  <div id="body"></div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let REPORT = null;
+
+async function load() {
+  const r = await fetch("/api/report");
+  if (!r.ok) {
+    $("#head").innerHTML = '<div class="empty">Nenhuma partida analisada ainda.</div>';
+    return;
+  }
+  REPORT = await r.json();
+  renderHead(); renderCurve(); renderBody(); checkReplay();
+}
+
+function renderHead() {
+  const d = REPORT;
+  const dur = `${Math.floor(d.duration_s / 60)}:${String(d.duration_s % 60).padStart(2, "0")}`;
+  const ia = d.used_ai
+    ? `<span class="badge ai">IA: ${esc(Object.keys(d.model_trace).join(", "))}</span>`
+    : `<span class="badge noai">sem IA — deterministico</span>`;
+  $("#head").innerHTML = `
+    <div class="matchline">
+      <span class="champ">${esc(d.champion)}</span>
+      ${d.opponent ? `<span class="vs">vs ${esc(d.opponent)}</span>` : ""}
+      <span class="kda">${esc(d.kda)}</span>
+      <span class="result ${d.win ? "win" : "loss"}">${d.win ? "vitória" : "derrota"}</span>
+    </div>
+    <div class="meta">
+      <span>${esc(d.match_id)}</span><span>patch ${esc(d.patch)}</span>
+      <span>${dur}</span><span>${esc(d.position)}</span>${ia}
+    </div>`;
+}
+
+// A curva e a espinha da pagina: ela mostra QUANDO a partida foi decidida, e
+// os marcadores ligam cada finding ao ponto da curva em que ele acontece.
+function renderCurve() {
+  const pts = REPORT.advantage;
+  if (!pts || pts.length < 2) return;
+  const W = 1000, H = 130, pad = 6;
+  const x = (i) => (i / (pts.length - 1)) * W;
+  const y = (wp) => pad + (1 - wp / 100) * (H - 2 * pad);
+
+  const linha = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.wp).toFixed(1)}`).join("");
+  const area = `${linha}L${W},${H}L0,${H}Z`;
+  const totalMs = REPORT.duration_s * 1000;
+
+  const marcas = REPORT.findings.map(f => {
+    const px = (f.timestamp_ms / totalMs) * W;
+    const idx = Math.min(pts.length - 1, Math.round(f.timestamp_ms / 60000));
+    const cor = { 5: "#e05260", 4: "#e0803f", 3: "#d9b04a" }[f.severity] || "#6d88a8";
+    return `<g class="marker" onclick="jump(${f.index})">
+        <title>${esc(f.at)} — ${esc(f.claim)}</title>
+        <line x1="${px.toFixed(1)}" y1="0" x2="${px.toFixed(1)}" y2="${H}"
+              stroke="${cor}" stroke-width="1" opacity=".3"/>
+        <circle cx="${px.toFixed(1)}" cy="${y(pts[idx].wp).toFixed(1)}" r="4"
+                fill="${cor}"/>
+      </g>`;
+  }).join("");
+
+  $("#curve").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+         aria-label="probabilidade de vitória por minuto">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#48b0d4" stop-opacity=".22"/>
+        <stop offset="100%" stop-color="#48b0d4" stop-opacity="0"/>
+      </linearGradient></defs>
+      <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" stroke="#253449"
+            stroke-dasharray="4 4"/>
+      <path d="${area}" fill="url(#g)"/>
+      <path d="${linha}" fill="none" stroke="#48b0d4" stroke-width="1.6"/>
+      ${marcas}
+    </svg>
+    <div class="curve-label"><span>probabilidade de vitória · 0:00</span>
+      <span>50%</span><span>${Math.floor(REPORT.duration_s / 60)}min</span></div>`;
+}
+
+function renderBody() {
+  const d = REPORT;
+  const top = d.findings.slice(0, 3), resto = d.findings.slice(3);
+  let html = "";
+  if (!d.findings.length) {
+    html = `<div class="note">Nenhum erro acima do limiar nesta partida. Isso não quer
+      dizer que ela foi perfeita — quer dizer que a telemetria sozinha não enxergou
+      nada grave.</div>`;
+  } else {
+    html += `<h2>Os ${top.length} principais</h2>` + top.map(f => card(f, true)).join("");
+    if (resto.length) html += `<h2>Também vale olhar</h2>` + resto.map(f => card(f, false)).join("");
+  }
+  if (d.benchmarks.length) {
+    html += `<h2>Benchmarks</h2><div class="bench">` + d.benchmarks.map(b => `
+      <div class="brow ${b.weak ? "weak" : b.strong ? "strong" : ""}">
+        <span class="bname">${esc(b.label.split(" (")[0])}</span>
+        <span class="bnum">p${b.percentile.toFixed(0)} · mediana ${b.median}</span>
+        <div class="bbar"><div class="bfill" style="width:${b.percentile}%"></div></div>
+        <span class="bsrc">${esc(b.source_label)}</span>
+      </div>`).join("") + `</div>`;
+  }
+  html += `<h2>Procedência</h2><div class="note">` + (d.used_ai
+    ? `Modelos: <code>${esc(Object.keys(d.model_trace).join(", "))}</code>.
+       ${d.validation ? esc(d.validation) + "." : ""}`
+    : `Este relatório foi calculado inteiramente em Python, nesta máquina.
+       Nenhum modelo foi consultado e nenhum dado saiu daqui.`)
+    + ` Patch ${esc(d.patch)}.</div>`;
+  $("#body").innerHTML = html;
+}
+
+function card(f, isTop) {
+  const ev = f.evidence.map(e => `
+    <li class="${e.tier.toLowerCase()}">
+      <span class="tier">[${e.tier}]</span>${esc(e.statement)}
+      ${e.assumption ? `<span class="assumption">premissa: ${esc(e.assumption)}</span>` : ""}
+    </li>`).join("");
+  return `
+    <article class="finding ${isTop ? "top" : ""}" data-sev="${f.severity}" id="f${f.index}">
+      <div class="fhead">
+        <span class="rank">#${f.index + 1}</span>
+        <span class="sev">gravidade ${f.severity}</span>
+        <span>${esc(f.at)}</span>
+        <span class="cat">${esc(f.category)}</span>
+      </div>
+      <div class="claim">${esc(f.claim)}</div>
+      <ul class="ev">${ev}</ul>
+      <div class="fix"><b>Correção:</b> ${esc(f.fix)}</div>
+      ${f.drill ? `<div class="drill"><b>Treino:</b> ${esc(f.drill)}</div>` : ""}
+      <button class="seek" onclick="jump(${f.index})" id="b${f.index}">
+        ▶ Assistir no replay · ${esc(f.seek_at)}
+      </button>
+      <span class="seekmsg" id="m${f.index}"></span>
+    </article>`;
+}
+
+async function checkReplay() {
+  const r = await fetch("/api/replay/status");
+  const s = await r.json();
+  const box = $("#replaybox");
+  if (s.available) {
+    box.innerHTML = `<div class="note">Replay rodando — clique em qualquer finding
+      para pular. O replay para <b>8 segundos antes</b> do momento marcado: o erro é a
+      decisão, não a consequência.</div>`;
+    return;
+  }
+  document.querySelectorAll("button.seek").forEach(b => { b.disabled = true; });
+  box.innerHTML = `<div class="note">Sem replay: ${esc(s.reason || "client não encontrado")}.
+    ${s.hint ? esc(s.hint) : "O relatório inteiro funciona sem ele."}</div>`;
+}
+
+async function jump(i) {
+  const msg = document.getElementById("m" + i);
+  document.getElementById("f" + i)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (!msg) return;
+  msg.className = "seekmsg"; msg.textContent = "pulando…";
+  try {
+    const r = await fetch("/api/seek/" + i, { method: "POST" });
+    const d = await r.json();
+    if (r.ok) { msg.textContent = `replay em ${d.at}`; }
+    else { msg.className = "seekmsg err"; msg.textContent = d.error || "o client recusou"; }
+  } catch {
+    msg.className = "seekmsg err"; msg.textContent = "servidor não respondeu";
+  }
+}
+
+load();
+</script>

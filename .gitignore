@@ -1,0 +1,35 @@
+# segredos — ver COMPLIANCE.md e docs/05-stack-and-repo.md secao 5.6
+.env
+*.key
+*.pem
+!certs/riotgames.pem
+secrets.*
+/*.txt
+
+# local data
+data/
+cache/
+*.sqlite
+*.sqlite3
+*.parquet
+!knowledge/benchmarks/*.parquet
+*.rofl
+*.mp4
+*.mkv
+frames/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# node
+node_modules/
+web/dist/
+
+# os
+.DS_Store
+Thumbs.db

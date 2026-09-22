@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Escrever um princípio de coaching
+    url: https://github.com/Kazualkun/LeagueCoaching/blob/main/CONTRIBUTING.md#escrevendo-princípios
+    about: >-
+      A contribuição mais valiosa do projeto, e não precisa de Python. Abra um PR
+      direto com um arquivo .md em knowledge/principles/ — não precisa de issue antes.
+  - name: Isso dá ban? Leia o COMPLIANCE
+    url: https://github.com/Kazualkun/LeagueCoaching/blob/main/COMPLIANCE.md
+    about: A posição completa frente aos termos da Riot, com o raciocínio.

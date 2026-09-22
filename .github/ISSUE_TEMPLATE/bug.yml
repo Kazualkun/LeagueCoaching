@@ -1,0 +1,52 @@
+name: "Bug (algo quebrou ou não rodou)"
+description: Erro, stack trace, comando que falhou. Para conselho errado do coach, use "Finding ruim".
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de abrir: rode `uv run riftcoach doctor` e cole a saída abaixo. Ele testa cada API
+        separadamente e normalmente já diz qual é o problema.
+
+  - type: textarea
+    id: oque
+    attributes:
+      label: O que aconteceu
+      description: O comando que você rodou e o que apareceu.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que você esperava que acontecesse
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Saída de `riftcoach doctor`
+      description: Ele não imprime a sua chave, só os 11 primeiros caracteres do prefixo.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: so
+    attributes:
+      label: Sistema operacional e versão do Python
+      placeholder: "Windows 11, Python 3.12"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checagens
+    attributes:
+      label: Checagens
+      options:
+        - label: Minha chave da Riot não está expirada (chaves de desenvolvimento expiram a cada 24h)
+        - label: Não colei nenhuma chave real nesta issue
+          required: true
