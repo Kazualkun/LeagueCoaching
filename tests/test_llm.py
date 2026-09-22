@@ -15,6 +15,9 @@ deixar de ser rodado.
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 import httpx
 import pytest
 import respx
@@ -843,3 +846,90 @@ def test_the_system_prompt_states_the_closed_world_rule() -> None:
     s = load_prompt("_system")
     assert "não tem" in s and "memória confiável" in s
     assert "T1" in s and "T2" in s and "T3" in s
+
+
+# --------------------------------------------------------------------------
+# O caminho de CPU
+# --------------------------------------------------------------------------
+
+
+def test_ram_sobrando_sem_gpu_ainda_da_um_caminho_local() -> None:
+    """O bug que este teste existe para impedir contradizia a premissa do
+    projeto: uma maquina com placa integrada fraca e 16 GB de RAM era
+    classificada como "nao ha modelo local possivel, use a nuvem" — quando um
+    4B roda perfeitamente bem na CPU com essa RAM."""
+    from riftcoach.llm.hardware import _tier_for
+
+    assert _tier_for(vram_gb=0.0, ram_gb=16.0) == "cpu"
+    assert _tier_for(vram_gb=2.0, ram_gb=16.0) == "cpu"
+
+
+def test_a_gpu_sempre_ganha_da_ram() -> None:
+    """VRAM e uma ordem de grandeza mais rapida. RAM e plano B, nunca
+    preferencia."""
+    from riftcoach.llm.hardware import _tier_for
+
+    assert _tier_for(vram_gb=8.0, ram_gb=64.0) == "tier1"
+    assert _tier_for(vram_gb=24.0, ram_gb=8.0) == "tier3"
+
+
+def test_ram_insuficiente_continua_mandando_para_a_nuvem() -> None:
+    from riftcoach.llm.hardware import CPU_REQUIREMENT_GB, _tier_for
+
+    assert _tier_for(vram_gb=0.0, ram_gb=CPU_REQUIREMENT_GB - 0.1) == "none"
+    assert _tier_for(vram_gb=0.0, ram_gb=0.0) == "none"
+
+
+def test_o_tier_de_cpu_escolhe_um_modelo_menor() -> None:
+    """Na CPU o gargalo e a banda de memoria: um 8B entrega 2-3 tokens/s e um
+    4B entrega 4-6. A diferenca entre lento e inutilizavel mora ai."""
+    from riftcoach.llm.catalog import OLLAMA_TEXT_BY_TIER
+
+    assert OLLAMA_TEXT_BY_TIER["cpu"] == "qwen3:4b"
+    assert "none" not in OLLAMA_TEXT_BY_TIER
+
+
+def test_a_descricao_avisa_que_vai_ser_lento() -> None:
+    """Dizer so "da para rodar local" faria a pessoa esperar vinte minutos
+    achando que travou."""
+    from riftcoach.llm.hardware import Hardware
+
+    hw = Hardware(
+        gpu_name="Intel(R) HD Graphics 4000",
+        vram_gb=2.0,
+        unified_memory=False,
+        tier="cpu",
+        ollama_up=False,
+        ram_gb=16.0,
+        avx2=False,
+    )
+    texto = hw.describe()
+    assert "16 GB de RAM" in texto
+    assert "AVX2" in texto, "sem AVX2 a velocidade cai pela metade; a pessoa precisa saber"
+    assert "CPU" in texto
+
+
+def test_cache_antigo_sem_ram_e_refeito(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Um cache gravado pela versao que so conhecia VRAM manteria a maquina
+    classificada como "sem opcao local" para sempre."""
+    import json as _json
+
+    from riftcoach.llm import hardware as hw_mod
+
+    caminho = tmp_path / "hardware.json"
+    caminho.write_text(
+        _json.dumps({"gpu_name": "iGPU", "vram_gb": 1.0, "unified_memory": False, "tier": "none"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hw_mod, "cache_path", lambda: caminho)
+    monkeypatch.setattr(hw_mod, "probe_gpu", lambda: ("iGPU", 1.0, False))
+    monkeypatch.setattr(hw_mod, "_probe_ram_gb", lambda: 16.0)
+    monkeypatch.setattr(hw_mod, "_probe_avx2", lambda: True)
+
+    async def sem_ollama(base_url: str = "") -> tuple[bool, tuple[str, ...]]:
+        return False, ()
+
+    monkeypatch.setattr(hw_mod, "probe_ollama", sem_ollama)
+    hw = asyncio.run(hw_mod.probe())
+    assert hw.tier == "cpu"
+    assert hw.ram_gb == 16.0

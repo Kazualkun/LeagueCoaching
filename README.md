@@ -152,7 +152,11 @@ uv run riftcoach pin-cert             # fixa o certificado do client (com um rep
 | 12–16 GB (4070, 3080, 4060 Ti 16GB) | `ollama pull qwen3:14b` — 100% local |
 | 8 GB | `ollama pull qwen3:8b` — local, ou use um tier gratuito na nuvem para resultados melhores |
 | Apple Silicon 16 GB+ | `ollama pull qwen3:14b` |
-| Sem GPU / notebook | Chave gratuita do Google AI Studio → Gemini Flash. Funciona bem. |
+| Sem GPU, mas 8 GB+ de RAM | `ollama pull qwen3:4b` — roda **na CPU**. Funciona, mas é lento: conte com 4–6 tokens/s, e metade disso numa CPU sem AVX2 (anterior a 2013) |
+| Sem GPU e pouca RAM | Chave gratuita do Google AI Studio → Gemini Flash. Funciona bem. |
+
+> **Para conversar com a IA, um tier gratuito ganha de qualquer CPU.** Um relatório é um trabalho em
+> lote que você roda uma vez e espera; uma conversa é ida e volta, e 5 tokens/s tornam isso penoso.
 
 **Se nenhuma opção de IA estiver disponível, o relatório sai do mesmo jeito** — percentis de
 referência, curva de vantagem, erros medidos com o custo em probabilidade de vitória, eficiência

@@ -22,14 +22,21 @@ from riftcoach.config import data_dir, settings
 from riftcoach.llm.base import Capability, CostClass, LatencyClass, Privacy, RateLimit
 from riftcoach.llm.hardware import Tier
 
-# Modelo por tier de hardware. Chave "none" nao existe de proposito: sem VRAM
-# suficiente nao ha modelo local, e forcar um seria entregar 2 tokens/s.
+# Modelo por tier de hardware. Chave "none" nao existe de proposito: sem
+# memoria suficiente nao ha modelo local, e forcar um seria entregar 2 tokens/s.
+#
+# "cpu" existe para maquinas sem GPU que sirva mas com RAM sobrando. O modelo
+# e menor de proposito: na CPU o gargalo e a banda de memoria, entao um 8B
+# entregaria 2-3 tokens/s e um 4B entrega 4-6. A diferenca entre "lento" e
+# "inutilizavel" mora ai.
 OLLAMA_TEXT_BY_TIER: dict[Tier, str] = {
+    "cpu": "qwen3:4b",
     "tier1": "qwen3:8b",
     "tier2": "qwen3:14b",
     "tier3": "qwen3:30b-a3b",
 }
 OLLAMA_VISION_BY_TIER: dict[Tier, str] = {
+    "cpu": "qwen2.5vl:3b",
     "tier1": "qwen2.5vl:3b",
     "tier2": "qwen2.5vl:7b",
     "tier3": "qwen2.5vl:7b",
