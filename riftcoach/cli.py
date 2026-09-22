@@ -7,8 +7,9 @@ A interface web (etapa 5) e uma casca sobre estas mesmas funcoes.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -138,19 +139,31 @@ def doctor(
         """
         results = Table("API", "Host", "Status", "Detalhe")
         async with RiotClient() as rc:
-            checks: list[tuple[str, str, object]] = [
-                ("LOL-STATUS-V4", settings.riot_platform, rc.platform_status()),
+            # FABRICAS, nao corrotinas ja criadas.
+            #
+            # A versao anterior montava a lista chamando os metodos, o que CRIA
+            # as corrotinas na hora. Quando a primeira checagem falhava, o
+            # `return` saia deixando as outras sem await — e o Python avisava
+            # "coroutine was never awaited" bem no meio da tabela de
+            # diagnostico, que e justamente onde o usuario esta tentando
+            # entender o que deu errado.
+            checks: list[tuple[str, str, Callable[[], Awaitable[Any]]]] = [
+                ("LOL-STATUS-V4", settings.riot_platform, rc.platform_status),
             ]
             if riot_id:
                 name, tag = _split_riot_id(riot_id)
                 checks.append(
-                    ("ACCOUNT-V1", rc.routing, rc.account_by_riot_id(name, tag))
+                    (
+                        "ACCOUNT-V1",
+                        rc.routing,
+                        lambda: rc.account_by_riot_id(name, tag),
+                    )
                 )
 
             puuid: str | None = None
-            for label, host, coro in checks:
+            for label, host, fabrica in checks:
                 try:
-                    out = await coro  # type: ignore[misc]
+                    out = await fabrica()
                     detail = "ok"
                     if label == "ACCOUNT-V1" and isinstance(out, dict):
                         puuid = out.get("puuid")
@@ -164,12 +177,17 @@ def doctor(
                     return
 
             if puuid:
-                for label, host, coro in (
-                    ("MATCH-V5", rc.routing, rc.match_ids(puuid, count=1)),
-                    ("LEAGUE-V4", settings.riot_platform, rc.league_entries(puuid)),
+                pid = puuid
+                for label, host, fabrica in (
+                    ("MATCH-V5", rc.routing, lambda: rc.match_ids(pid, count=1)),
+                    (
+                        "LEAGUE-V4",
+                        settings.riot_platform,
+                        lambda: rc.league_entries(pid),
+                    ),
                 ):
                     try:
-                        out = await coro  # type: ignore[misc]
+                        out = await fabrica()
                         n = len(out) if isinstance(out, list) else 0
                         results.add_row(
                             label, host, "[green]ok[/]", f"{n} registro(s)"
