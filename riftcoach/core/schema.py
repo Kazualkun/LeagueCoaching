@@ -135,6 +135,17 @@ class Mark(BaseModel):
     wp_loss: float | None = None
     resolved: bool = False
 
+    # ONDE, em coordenadas de mundo. Os dois sao opcionais porque nem toda
+    # marcacao tem lugar: "voce recuou com ouro sobrando" acontece no tempo,
+    # nao no mapa, e inventar uma coordenada para ela seria pior que deixar
+    # vazio.
+    #
+    # `where` sai do evento da timeline e e EXATO. `you` sai do frame de
+    # participante, que a Riot so entrega uma vez por minuto — entao ele e
+    # aproximado, e quem desenha precisa trata-lo como aproximado.
+    where: tuple[float, float] | None = None
+    you: tuple[float, float] | None = None
+
     @property
     def seek_ms(self) -> int:
         """8s antes: o erro e a decisao, nao o desfecho."""

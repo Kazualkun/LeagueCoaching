@@ -525,9 +525,27 @@ Cada cartão traz:
 crítico é vermelho e o dobro de largo, erro médio é laranja, leve é amarelo, e as suas marcações têm
 cor própria. A linha branca é onde o replay está.
 
-**No minimapa**, um anel acompanha onde você estava, com um rastro pontilhado do último minuto. O
-anel é largo de propósito: a Riot só entrega uma posição por minuto, e um ponto fino fingiria uma
-precisão que não existe.
+**No minimapa**, enquanto o cartão está na tela, aparecem dois pontos ligados por uma linha:
+
+| No mapa | O que é | Precisão |
+|---|---|---|
+| **VOCÊ** — anel branco largo | onde você estava naquele momento | aproximada: a Riot só entrega uma posição por **minuto**, então é um anel largo e não um ponto |
+| **AQUI** — ponto na cor do erro | onde a jogada aconteceu | exata: vem do próprio evento da timeline |
+
+O comprimento da linha entre os dois *é* a informação — "o dragão caiu enquanto eu empurrava a top".
+É a pergunta de macro respondida sem ler nada.
+
+Os rótulos ficam no próprio mapa, e não só numa legenda: quem abriu o overlay no minuto vinte nunca
+viu o cartão de boas-vindas.
+
+> **Nem toda marcação tem lugar.** "Você recuou com ouro sobrando" acontece no tempo, não no mapa —
+> essas aparecem sem ponto, e o cartão funciona igual. Cravar uma coordenada nelas seria pior que
+> deixar vazio.
+
+Uma versão anterior desenhava um anel seguindo você o tempo todo. Estava errado por dois motivos: o
+jogo **já** mostra onde você está, e o nosso anel, interpolado entre frames de 60 em 60 segundos,
+discordava visivelmente do ícone do próprio jogo. Overlay que contradiz o jogo perde a confiança de
+quem olha.
 
 #### Os atalhos
 

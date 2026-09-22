@@ -128,41 +128,75 @@ def test_sem_duracao_nao_ha_regua() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_sem_rastro_nao_desenha_no_minimapa() -> None:
+def marca_com_lugar(
+    t_s: int = 900,
+    sev: int = 5,
+    onde: tuple[float, float] | None = (5000.0, 10000.0),
+    voce: tuple[float, float] | None = (10000.0, 4000.0),
+) -> Mark:
+    m = marca(t_s, sev=sev)
+    m.where = onde
+    m.you = voce
+    return m
+
+
+def test_o_minimapa_so_aparece_junto_com_o_cartao() -> None:
+    """Ponto no mapa sem explicacao ao lado e enfeite. Os dois falam da mesma
+    jogada, entao vivem e somem juntos."""
     from riftcoach.overlay.scene import Circle
 
-    st = estado(marca(900))
-    st.show_ruler = False  # a regua tambem desenha um circulo: o cursor dela
-    assert st.focus_track == []
-    assert not [i for i in build(st, 900_000).items if isinstance(i, Circle)]
+    st = estado(marca_com_lugar(900))
+
+    def circulos(now_ms: int) -> list[Circle]:
+        return [
+            i for i in build(st, now_ms).items if isinstance(i, Circle) and i.y > st.height * 0.5
+        ]
+
+    assert circulos(900_000), "com o cartao na tela, o mapa tem de estar marcado"
+    assert not circulos(300_000), "longe de qualquer marcacao, o mapa fica limpo"
 
 
-def test_o_anel_segue_o_jogador_pelo_mapa() -> None:
+def test_o_minimapa_rotula_os_dois_pontos_na_propria_tela() -> None:
+    """Legenda que some depois de dez segundos nao serve para quem chegou no
+    minuto vinte. Os rotulos ficam no mapa, sempre."""
+    st = estado(marca_com_lugar(900))
+    textos = [i.text for i in build(st, 900_000).items if isinstance(i, Label)]
+    assert "VOCE" in textos
+    assert "AQUI" in textos
+
+
+def test_os_dois_pontos_caem_em_lados_opostos_do_mapa() -> None:
+    """O comprimento da linha entre eles E a informacao: o quanto voce estava
+    longe da jogada."""
     from riftcoach.overlay.scene import Circle
 
-    st = estado(marca(900))
-    st.show_ruler = False
-    st.focus_track = [(0, 1000.0, 1000.0), (600_000, 13000.0, 13000.0)]
+    st = estado(marca_com_lugar(900, onde=(1500.0, 1800.0), voce=(13000.0, 13000.0)))
+    pontos = [
+        i for i in build(st, 900_000).items if isinstance(i, Circle) and i.y > st.height * 0.5
+    ]
+    assert len(pontos) == 2
+    a, b = sorted(pontos, key=lambda c: c.x)
+    assert a.x < b.x and a.y > b.y, "base azul embaixo a esquerda, vermelha em cima"
 
-    cedo = next(i for i in build(st, 0).items if isinstance(i, Circle))
-    tarde = next(i for i in build(st, 600_000).items if isinstance(i, Circle))
-    # Da base azul (embaixo a esquerda) para a vermelha (em cima a direita).
-    assert tarde.x > cedo.x and tarde.y < cedo.y
 
-
-def test_a_posicao_e_interpolada_entre_frames() -> None:
-    """A Riot so da uma posicao por MINUTO. Sem interpolar, o anel pularia de
-    lugar uma vez por minuto e pareceria quebrado."""
+def test_marcacao_sem_lugar_nao_inventa_um() -> None:
+    """ "Voce recuou com ouro sobrando" acontece no tempo, nao no mapa. Cravar
+    uma coordenada nela seria pior que deixar vazio."""
     from riftcoach.overlay.scene import Circle
 
-    st = estado()
-    st.show_ruler = False
-    st.focus_track = [(0, 0.0, 0.0), (60_000, 14000.0, 0.0)]
-    meio = next(i for i in build(st, 30_000).items if isinstance(i, Circle))
-    inicio = next(i for i in build(st, 0).items if isinstance(i, Circle))
-    fim = next(i for i in build(st, 60_000).items if isinstance(i, Circle))
-    assert inicio.x < meio.x < fim.x
-    assert abs(meio.x - (inicio.x + fim.x) / 2) < 1.0
+    st = estado(marca_com_lugar(900, onde=None, voce=None))
+    assert not [
+        i for i in build(st, 900_000).items if isinstance(i, Circle) and i.y > st.height * 0.5
+    ]
+
+
+def test_so_o_lugar_da_jogada_ja_basta() -> None:
+    """Nem toda marcacao sabe onde o jogador estava, e isso nao pode impedir de
+    mostrar onde a jogada foi."""
+    st = estado(marca_com_lugar(900, voce=None))
+    textos = [i.text for i in build(st, 900_000).items if isinstance(i, Label)]
+    assert "AQUI" in textos
+    assert "VOCE" not in textos
 
 
 # --------------------------------------------------------------------------
@@ -348,3 +382,44 @@ def test_sem_janela_nossa_declarada_so_o_jogo_vale() -> None:
 
     assert pertence_a_revisao(100, 100) is True
     assert pertence_a_revisao(200, 100) is False
+
+
+def test_o_custo_nao_e_dito_duas_vezes() -> None:
+    """O motor de regras as vezes ja escreve o custo na frase. Repetir logo
+    abaixo, arredondado de outro jeito, parece dois numeros diferentes para a
+    mesma coisa — foi o que apareceu na tela: "custou 6pp" e "custou 6.5"."""
+    m = marca(900, sev=4, texto="Perdeu dragon em 8:41 custou 6pp.")
+    st = estado(m)
+    textos = [i.text for i in build(st, 900_000).items if isinstance(i, Label)]
+    assert not any("pontos de vitória" in t for t in textos)
+
+    # E quando a frase NAO traz o custo, ele continua aparecendo.
+    st2 = estado(marca(900, sev=4, texto="voce empurrou a wave sem visao"))
+    textos2 = [i.text for i in build(st2, 900_000).items if isinstance(i, Label)]
+    assert any("pontos de vitória" in t for t in textos2)
+
+
+def test_rotulo_perto_da_borda_nao_vaza_da_tela() -> None:
+    """O minimapa fica colado no canto inferior direito. Um ponto na beirada
+    joga metade do texto para fora, e no canto de baixo nao ha para onde
+    rolar."""
+    # Canto do mapa que cai no extremo direito do minimapa.
+    st = estado(marca_com_lugar(900, onde=(14800.0, 100.0), voce=(14800.0, 200.0)))
+    rotulos = [i for i in build(st, 900_000).items if isinstance(i, Label)]
+    nos_cantos = [i for i in rotulos if i.text in ("VOCE", "AQUI")]
+    assert len(nos_cantos) == 2
+    for lab in nos_cantos:
+        meia = len(lab.text) * lab.size * 0.35
+        assert lab.x - meia >= 0, f"{lab.text} vazou pela esquerda"
+        assert lab.x + meia <= st.width, f"{lab.text} vazou pela direita"
+        assert 0 <= lab.y <= st.height, f"{lab.text} vazou na vertical"
+
+
+def test_rotulo_no_pe_do_minimapa_sobe_em_vez_de_sair_da_tela() -> None:
+    """Metade do minimapa encosta na borda de baixo. Um rotulo sempre posto
+    abaixo do ponto sairia da tela em metade dos casos."""
+    # Canto inferior do mapa: base azul, que cai no pe do minimapa.
+    st = estado(marca_com_lugar(900, onde=(500.0, 500.0), voce=None))
+    aqui = next(i for i in build(st, 900_000).items if isinstance(i, Label) and i.text == "AQUI")
+    assert aqui.anchor == "s", "sem espaco embaixo, o rotulo tem de ir para cima"
+    assert aqui.y < st.height

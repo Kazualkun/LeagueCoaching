@@ -19,13 +19,6 @@ from typing import Any
 
 import pytest
 
-# Sem servidor grafico (CI em Linux, por exemplo) nao ha o que testar.
-try:
-    _r = tk.Tk()
-    _r.destroy()
-except Exception:  # pragma: no cover
-    pytest.skip("sem ambiente grafico", allow_module_level=True)
-
 from riftcoach.gui.app import App, Resultado
 
 
@@ -47,7 +40,18 @@ def _janela() -> Any:
 
     original = App._tarefa
     App._tarefa = falso_tarefa  # type: ignore[method-assign]
-    a = App()
+    try:
+        a = App()
+    except tk.TclError as e:  # pragma: no cover
+        # Sem servidor grafico (CI em Linux) nao ha o que testar.
+        #
+        # A verificacao acontece AQUI, e nao numa sonda no topo do modulo,
+        # porque a sonda criava e destruia uma raiz Tk so para decidir se
+        # pulava — e criar/destruir raizes repetidamente e exatamente o que o
+        # Tcl nao aguenta. Numa suite inteira isso virava
+        # "Can't find a usable tk.tcl" em um teste que passava sozinho.
+        App._tarefa = original  # type: ignore[method-assign]
+        pytest.skip(f"sem ambiente grafico: {e}")
     for depois in a.root.tk.call("after", "info"):
         a.root.after_cancel(depois)
     a.pedidos = pedidos  # type: ignore[attr-defined]

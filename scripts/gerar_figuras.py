@@ -50,6 +50,8 @@ MARCAS = [
         author="user",
         kind="question",
         text="por que eu recuei aqui?",
+        where=None,
+        you=(7000.0, 7000.0),
     ),
     Mark(
         t_ms=14 * 60_000 + 54_000,
@@ -61,6 +63,9 @@ MARCAS = [
         category="wave",
         severity=5,
         wp_loss=7.3,
+        # O dragão caiu no pit de baixo enquanto o jogador estava na top.
+        where=(9866.0, 4414.0),
+        you=(3000.0, 11500.0),
     ),
     Mark(
         t_ms=21 * 60_000 + 10_000,

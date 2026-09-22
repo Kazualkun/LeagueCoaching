@@ -14,9 +14,10 @@ from typing import Any
 
 from riftcoach.analysis.report import analyze, analyze_with_ai
 from riftcoach.core.errors import RiftCoachError
-from riftcoach.core.review import load_session, open_session
+from riftcoach.core.review import load_session, open_session, save_session
 from riftcoach.core.schema import CoachingReport, ReviewSession
 from riftcoach.knowledge.sync import PatchDB
+from riftcoach.overlay.locais import local_do_evento, local_do_jogador
 from riftcoach.overlay.run import focus_track
 from riftcoach.overlay.scene import OverlayState
 from riftcoach.parse.distill import distill
@@ -93,6 +94,9 @@ async def preparar(
             report, _txt = analyze(facts, resolver=db)
         sessao = open_session(facts.match_id, puuid, report, facts)
 
+    trilha = focus_track(timeline, facts.focus.participant_id)
+    _dar_lugar(sessao, timeline, trilha)
+
     st = OverlayState(
         width=1600,
         height=900,
@@ -100,7 +104,33 @@ async def preparar(
         marks=sessao.timeline(),
         hud_scale=hud_scale,
         minimap_rotated=minimap_rotated,
-        focus_track=focus_track(timeline, facts.focus.participant_id),
+        focus_track=trilha,
         focus_champion=facts.focus.champion,
     )
     return Preparado(state=st, session=sessao, facts=facts, report=report)
+
+
+def _dar_lugar(
+    sessao: ReviewSession,
+    timeline: dict[str, Any],
+    trilha: list[tuple[int, float, float]],
+) -> None:
+    """Preenche `where` e `you` das marcacoes que ainda nao tem.
+
+    Feito aqui, e nao em `marks_from_report`, por um motivo pratico: a timeline
+    crua e grande e so existe neste ponto do caminho. Guardar ela inteira na
+    revisao para calcular isto depois custaria megabytes por partida.
+
+    Idempotente: marcacao que ja tem lugar nao e tocada. Assim a revisao
+    guardada em disco nao perde posicao quando o formato da timeline mudar.
+    """
+    mudou = False
+    for m in sessao.marks:
+        if m.where is None:
+            m.where = local_do_evento(timeline, m.t_ms)
+            mudou = mudou or m.where is not None
+        if m.you is None:
+            m.you = local_do_jogador(trilha, m.t_ms)
+            mudou = mudou or m.you is not None
+    if mudou:
+        save_session(sessao)

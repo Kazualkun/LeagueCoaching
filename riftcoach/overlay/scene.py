@@ -15,7 +15,6 @@ para o momento. A pessoa le, olha, e ve acontecer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import pairwise
 from typing import Literal
 
 from riftcoach.core.schema import Mark
@@ -312,11 +311,16 @@ def _cartao(st: OverlayState, now_ms: int, m: Mark, indice: int) -> list[Primiti
         sub = m.kind.upper()
 
     linhas_h = fonte * 1.45
+    # O motor de regras as vezes ja escreve o custo dentro da propria frase
+    # ("Perdeu dragon em 8:41 custou 6pp."). Repetir logo abaixo, arredondado
+    # de outro jeito, fica pior do que nao dizer: parecem dois numeros
+    # diferentes para a mesma coisa.
+    mostrar_custo = bool(m.wp_loss) and "pp." not in m.text and "pontos" not in m.text
     # 3.1 linhas de folga: titulo, categoria, e o par contagem + barra no pe.
     # Medido contra a tela: com 2.6 a barra encostava na borda de baixo e
     # parecia corte de renderizacao, nao elemento.
     altura = pad * 2 + linhas_h * (len(corpo) + 3.1)
-    if m.wp_loss:
+    if mostrar_custo:
         altura += linhas_h
     x0 = 0.105 * st.width  # a coluna de jogadores do espectador acaba em ~9%
     y0 = 0.13 * st.height
@@ -341,7 +345,7 @@ def _cartao(st: OverlayState, now_ms: int, m: Mark, indice: int) -> list[Primiti
         out.append(Label(tx, ty, ln, color=COR_TEXTO, size=fonte))
         ty += linhas_h
 
-    if m.wp_loss:
+    if mostrar_custo and m.wp_loss:
         out.append(
             Label(
                 tx,
@@ -426,7 +430,7 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
     fonte = 0.0155 * u
     pad = 0.014 * u
     linha = fonte * 1.5
-    larg = 0.29 * st.width
+    larg = 0.37 * st.width
     x0 = 0.105 * st.width
     y0 = 0.13 * st.height
 
@@ -440,12 +444,15 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
         (COR_LEVE, "detalhe a corrigir"),
         (COR_USUARIO, "suas marcações"),
     ]
+    # A explicacao do minimapa fica aqui E nos rotulos do proprio mapa. Quem
+    # chega no minuto vinte nunca viu este cartao.
+    mapa = "no minimapa: VOCE = onde voce estava · AQUI = onde a jogada aconteceu"
     atalhos = [
         ("Ctrl+Alt+S", "pular para o próximo erro"),
         ("Ctrl+Alt+E", "marcar um erro seu"),
         ("Ctrl+Alt+H", "esconder isto"),
     ]
-    altura = pad * 2 + linha * (3.2 + len(legenda) + len(atalhos))
+    altura = pad * 2 + linha * (4.5 + len(legenda) + len(atalhos))
     caixa = Rect(x0, y0, larg, altura)
 
     out: list[Primitive] = [
@@ -470,6 +477,9 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
         out.append(Label(tx + fonte * 1.25, ty, texto, color=COR_FRACO, size=fonte * 0.92))
         ty += linha
     ty += linha * 0.25
+
+    out.append(Label(tx, ty, mapa, color=COR_FRACO, size=fonte * 0.86))
+    ty += linha * 1.3
 
     for tecla, texto in atalhos:
         out.append(Label(tx, ty, tecla, color=COR_TEXTO, size=fonte * 0.92, bold=True))
@@ -498,50 +508,105 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
     return out
 
 
-def _posicao_em(st: OverlayState, t_ms: int) -> tuple[float, float] | None:
-    """Posicao do jogador em foco, interpolada entre frames.
+def _minimapa(st: OverlayState, m: Mark | None) -> list[Primitive]:
+    """O mapa da jogada marcada. So aparece junto com o cartao.
 
-    A Riot so entrega uma posicao por MINUTO. Interpolar linearmente entre dois
-    pontos separados por 60 s e uma mentira util: acerta o lado do mapa, erra a
-    rota exata. Por isso o desenho que usa isto e um circulo largo de atencao e
-    nunca uma seta dizendo "voce estava exatamente aqui".
+    A VERSAO ANTERIOR ESTAVA ERRADA e vale dizer por que, porque o erro e
+    tentador: ela desenhava um anel branco seguindo o jogador o tempo todo,
+    interpolado entre frames de 60 em 60 segundos. Duas coisas ruins de uma
+    vez — o anel discordava visivelmente do icone que o proprio jogo desenha,
+    e nao explicava nada, porque o jogo JA mostra onde voce esta. Quem viu
+    perguntou o que era aquela bola branca, e a pergunta estava certa.
+
+    O que o jogo NAO mostra e a relacao entre dois lugares num instante
+    passado: onde a jogada aconteceu e onde voce estava. Isso e exatamente a
+    pergunta de macro — "o barao caiu enquanto eu empurrava a top" — e e o que
+    este desenho responde agora.
+
+    Cada elemento vem rotulado NA TELA. Legenda em cartao que some depois de
+    dez segundos nao serve para quem chegou no minuto vinte.
     """
-    tr = st.focus_track
-    if not tr:
-        return None
-    if t_ms <= tr[0][0]:
-        return tr[0][1], tr[0][2]
-    if t_ms >= tr[-1][0]:
-        return tr[-1][1], tr[-1][2]
-    for (ta, xa, ya), (tb, xb, yb) in pairwise(tr):
-        if ta <= t_ms <= tb:
-            f = (t_ms - ta) / (tb - ta) if tb > ta else 0.0
-            return xa + f * (xb - xa), ya + f * (yb - ya)
-    return None
-
-
-def _minimapa(st: OverlayState, now_ms: int) -> list[Primitive]:
-    if not st.show_minimap:
+    if not st.show_minimap or m is None:
         return []
-    pos = _posicao_em(st, now_ms)
-    if pos is None:
+    if m.where is None and m.you is None:
         return []
+
+    u = st.u
     proj = MinimapProjector(
         minimap_rect(st.width, st.height, st.hud_scale), rotated=st.minimap_rotated
     )
-    px, py = proj.to_px(*pos)
-    u = st.u
-    out: list[Primitive] = [
-        # Anel largo em volta do icone. O icone do campeao ja cobre ~1000 u no
-        # minimapa, e a projecao erra ate ~370 u: um anel folgado diz a verdade,
-        # um ponto de 2 px fingiria uma precisao que nao existe.
-        Circle(px, py, max(7.0, 0.013 * u), outline="#ffffff", width=max(1.5, 0.002 * u)),
-    ]
-    anterior = _posicao_em(st, now_ms - 60_000)
-    if anterior is not None:
-        ax, ay = proj.to_px(*anterior)
-        if abs(ax - px) + abs(ay - py) > 3:
-            out.append(Line(ax, ay, px, py, color="#ffffff", width=1.5, dash=True))
+    cor = cor_da_marca(m)
+    fonte = max(8.0, 0.0125 * u)
+    out: list[Primitive] = []
+
+    onde = proj.to_px(*m.where) if m.where else None
+    voce = proj.to_px(*m.you) if m.you else None
+
+    # A linha entre os dois pontos E a informacao: o comprimento dela e "o
+    # quanto voce estava longe". Desenhada primeiro para ficar por baixo.
+    if onde and voce:
+        out.append(Line(voce[0], voce[1], onde[0], onde[1], color=cor, width=1.5, dash=True))
+
+    def centrado(x: float, texto: str) -> float:
+        """Prende o rotulo na tela, na horizontal.
+
+        O minimapa fica colado no canto inferior direito, entao um ponto
+        proximo da borda joga metade do texto para fora — e no canto de baixo
+        nao ha para onde rolar. Meio caractere por 0,35 do tamanho da fonte e
+        uma estimativa grosseira de largura, e grosseira basta: o erro e de
+        poucos pixels e sempre para dentro.
+        """
+        meia = len(texto) * fonte * 0.35
+        return min(max(x, meia + 2), st.width - meia - 2)
+
+    def acima_ou_abaixo(y: float, r: float, preferir_abaixo: bool) -> tuple[float, Anchor]:
+        """Escolhe o lado que cabe.
+
+        Metade do minimapa encosta na borda de baixo da tela, entao um rotulo
+        sempre posto abaixo do ponto sai fora em metade dos casos. Prefere-se o
+        lado pedido e troca-se quando nao ha espaco.
+        """
+        folga = fonte * 1.6
+        if preferir_abaixo and y + r + folga < st.height - 2:
+            return y + r + fonte * 0.2, "n"
+        if not preferir_abaixo and y - r - folga > 2:
+            return y - r - fonte * 0.2, "s"
+        # O lado preferido nao cabe: vai para o outro.
+        return (y - r - fonte * 0.2, "s") if preferir_abaixo else (y + r + fonte * 0.2, "n")
+
+    if voce:
+        # Area, nao ponto. A posicao do jogador vem de um frame por minuto:
+        # circulo pequeno fingiria uma precisao que o dado nao tem.
+        r = max(7.0, 0.014 * u)
+        out.append(Circle(voce[0], voce[1], r, outline="#ffffff", width=max(1.5, 0.002 * u)))
+        ly, anc = acima_ou_abaixo(voce[1], r, preferir_abaixo=False)
+        out.append(
+            Label(
+                centrado(voce[0], "VOCE"),
+                ly,
+                "VOCE",
+                color="#ffffff",
+                size=fonte,
+                bold=True,
+                anchor=anc,
+            )
+        )
+
+    if onde:
+        r = max(4.0, 0.007 * u)
+        out.append(Circle(onde[0], onde[1], r, fill=cor, outline="#000000", width=1.0))
+        ly, anc = acima_ou_abaixo(onde[1], r, preferir_abaixo=True)
+        out.append(
+            Label(
+                centrado(onde[0], "AQUI"),
+                ly,
+                "AQUI",
+                color=cor,
+                size=fonte,
+                bold=True,
+                anchor=anc,
+            )
+        )
     return out
 
 
@@ -559,7 +624,6 @@ def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
     """
     sc = Scene()
     sc.add(*_regua(st, now_ms))
-    sc.add(*_minimapa(st, now_ms))
     if boas_vindas:
         # Ele ocupa o lugar do cartao de erro, e por isso suprime os dois. Nos
         # primeiros segundos "o que e isto" importa mais que qualquer erro —
@@ -567,6 +631,10 @@ def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
         sc.add(*_boas_vindas(st, now_ms))
         return sc
     m = ativa(st, now_ms) if st.show_card else None
+    # O minimapa acompanha o cartao: os dois falam da MESMA jogada, e um sem o
+    # outro vira enfeite — pontos no mapa sem explicacao, ou explicacao sem
+    # lugar.
+    sc.add(*_minimapa(st, m))
     if m is not None:
         ia = sorted(
             (x for x in st.marks if x.author == "ai"),

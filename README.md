@@ -51,7 +51,12 @@ diagnóstico depois de já ter visto o desfecho — a resposta antes da pergunta
 lê, olha, e vê acontecer.
 
 Na faixa do topo ficam todas as marcações da partida. Erro crítico é mais largo e vermelho; as suas
-anotações têm cor própria. No minimapa, um anel acompanha onde você estava.
+anotações têm cor própria.
+
+**E o minimapa conta a história espacial.** Enquanto o cartão está na tela, ele marca dois pontos:
+**VOCÊ**, onde você estava, e **AQUI**, onde a jogada aconteceu — ligados por uma linha. O
+comprimento dela *é* a informação: "o dragão caiu enquanto eu empurrava a top". É a pergunta de
+macro respondida sem precisar ler nada.
 
 E você marca as suas, com a janela do jogo na frente:
 
