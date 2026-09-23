@@ -112,6 +112,7 @@ async def preparar(
         minimap_rotated=minimap_rotated,
         focus_track=trilha,
         focus_champion=facts.focus.champion,
+        match_id=facts.match_id,
     )
     return Preparado(
         state=st,

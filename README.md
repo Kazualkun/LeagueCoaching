@@ -68,6 +68,8 @@ E você marca as suas, com a janela do jogo na frente:
 | `Ctrl+Alt+Q` | uma dúvida para rever depois |
 | `Ctrl+Alt+S` | pular para a **próxima** marcação |
 | `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
+| `Ctrl+Alt+D` | **pincel** — desenhar por cima do replay |
+| `Ctrl+Alt+P` | salvar um print do momento, com os desenhos |
 | `Ctrl+Alt+A` | abrir e fechar a ajuda na tela |
 | `Ctrl+Alt+H` | esconder o overlay |
 

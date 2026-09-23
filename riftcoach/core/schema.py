@@ -152,16 +152,46 @@ class Mark(BaseModel):
         return max(0, self.t_ms - 8_000)
 
 
+class Stroke(BaseModel):
+    """Um traco desenhado a mao por cima do replay.
+
+    OS PONTOS SAO FRACAO DA TELA, nao pixels, e isso nao e detalhe: quem
+    desenha em 1600x900 e reabre em 2560x1440 veria o traco encolhido num
+    canto. Em fracao ele acompanha qualquer resolucao, que e a unica forma de
+    a anotacao continuar apontando para o que ela apontava.
+
+    `t_ms` amarra o traco ao INSTANTE da partida. Um rabisco sobre uma
+    teamfight nao quer dizer nada trinta segundos depois — ele aparece perto
+    do momento em que foi feito e some junto com ele.
+    """
+
+    t_ms: int = Field(ge=0)
+    points: list[tuple[float, float]] = Field(min_length=2)
+    color: str = "#ff453a"
+    width: float = Field(default=3.0, gt=0)
+
+    @model_validator(mode="after")
+    def _pontos_dentro_da_tela(self) -> Stroke:
+        """Fracao fora de [0,1] so aparece se alguem editou o arquivo a mao ou
+        se a conversao errou — e um traco invisivel fora da tela e pior que um
+        erro, porque nao da sinal nenhum."""
+        for x, y in self.points:
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                raise ValueError(f"ponto fora da tela: ({x}, {y}) — use fracao 0..1")
+        return self
+
+
 class ReviewSession(BaseModel):
     """Estado persistente de uma revisao, para poder retomar de onde parou.
 
     Guardado por (match_id, puuid). Ao reabrir, as marcacoes da IA e as do
-    jogador voltam juntas, na mesma linha do tempo.
+    jogador voltam juntas, na mesma linha do tempo — e os desenhos tambem.
     """
 
     match_id: str
     puuid: str
     marks: list[Mark] = Field(default_factory=list)
+    strokes: list[Stroke] = Field(default_factory=list)
     last_position_ms: int = 0
     completed: bool = False
 
@@ -174,6 +204,10 @@ class ReviewSession(BaseModel):
 
     def add(self, mark: Mark) -> None:
         self.marks.append(mark)
+
+    def strokes_em(self, t_ms: int, janela_ms: int = 6_000) -> list[Stroke]:
+        """Os tracos que pertencem a este instante."""
+        return [s for s in self.strokes if abs(s.t_ms - t_ms) <= janela_ms]
 
 
 class CoachingReport(BaseModel):

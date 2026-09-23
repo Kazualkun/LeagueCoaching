@@ -302,6 +302,7 @@ class OpenAICompatProvider:
                 elapsed_s=decorrido,
             ),
             schema_enforced=forte,
+            remaining_tokens=_inteiro(resp.headers.get("x-ratelimit-remaining-tokens")),
         )
 
     async def list_models(self) -> list[str]:
@@ -402,3 +403,15 @@ def _duracao_em_segundos(texto: str) -> float | None:
         total += float(numero)
         achou = True
     return total if achou else None
+
+
+def _inteiro(valor: str | None) -> int | None:
+    """Cabecalho numerico, ou None. Cabecalho ausente nao e erro: a maioria dos
+    provedores nao publica cota, e inventar zero ali faria o limitador parar
+    de mandar para sempre."""
+    if valor is None:
+        return None
+    try:
+        return int(float(valor))
+    except ValueError:
+        return None

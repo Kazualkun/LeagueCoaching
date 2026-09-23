@@ -571,6 +571,8 @@ Com a **janela do jogo na frente**:
 | `Ctrl+Alt+Q` | uma dúvida para rever depois |
 | `Ctrl+Alt+S` | pular para a **próxima** marcação (8 s antes dela) |
 | `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
+| `Ctrl+Alt+D` | **pincel** — desenhar por cima do replay |
+| `Ctrl+Alt+P` | salvar um print do momento, com os desenhos |
 | `Ctrl+Alt+A` | abrir e fechar a ajuda na tela |
 | `Ctrl+Alt+H` | esconder o overlay |
 
@@ -578,6 +580,41 @@ Com a **janela do jogo na frente**:
 tocar na linha do tempo do client.
 
 ![Uma marcação sua, no meio das da IA](img/overlay-sua-marcacao.jpg)
+
+#### O pincel
+
+`Ctrl+Alt+D` liga o pincel. Três coisas acontecem juntas, e as três são
+propositais:
+
+1. **O replay pausa.** Desenhar sobre imagem em movimento é desenhar no lugar errado — quando você
+   fecha o círculo, o campeão já saiu de dentro dele.
+2. **O overlay passa a receber o clique.** Fora do pincel ele deixa o clique atravessar, para nunca
+   bloquear a barra do replay; no pincel ele precisa do arrasto.
+3. **Aparece uma faixa vermelha embaixo**, dizendo PINCEL LIGADO. Ela é inconfundível porque, no
+   modo desenho, o clique não chega mais ao jogo — quem não perceber que entrou nele vai achar que o
+   League travou.
+
+| Enquanto o pincel está ligado | |
+|---|---|
+| arrastar o mouse | desenha |
+| `1` a `5` | troca a cor |
+| `X` | troca a espessura |
+| `Z` | desfaz o último traço |
+| `C` | limpa os traços deste momento |
+| `Ctrl+Alt+D` | sai do pincel |
+
+As cores têm uso sugerido: vermelho para o erro, amarelo para atenção, verde para o que era para
+fazer, azul para rota e movimentação, branco para anotação livre.
+
+**Os traços pertencem ao instante em que foram feitos** e somem junto com ele — um rabisco sobre uma
+teamfight não quer dizer nada trinta segundos depois. Eles ficam salvos na revisão e voltam quando
+você retorna àquele momento.
+
+E são guardados em **fração da tela**, não em pixels: se você desenhar em 1600x900 e reabrir o
+replay em 2560x1440, o traço continua apontando para o que apontava.
+
+`Ctrl+Alt+P` salva um PNG da janela do jogo com tudo por cima — a jogada, o cartão do erro e o seu
+desenho na mesma imagem, pronta para mandar para alguém. Vai para `~/.riftcoach/prints/`.
 
 #### As marcações ficam salvas
 

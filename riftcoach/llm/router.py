@@ -354,6 +354,8 @@ class ModelRouter:
                 continue
 
             self.guard.breaker.record_success(nome)
+            if out.remaining_tokens is not None:
+                self.guard.limiter.sincronizar_tokens(nome, out.remaining_tokens)
             self._learn_speed(provider, out)
             return out
 
@@ -384,12 +386,14 @@ class ModelRouter:
                 continue
 
             self.guard.breaker.record_success(nome)
+            if out.remaining_tokens is not None:
+                self.guard.limiter.sincronizar_tokens(nome, out.remaining_tokens)
             self._learn_speed(provider, out)
 
             try:
                 validado = model.model_validate_json(_extract_json(out.text))
             except (ValidationError, ValueError) as e:
-                self.guard.breaker.record_schema_violation(nome, str(e)[:200])
+                self.guard.breaker.record_schema_violation(nome, task.name, str(e)[:200])
                 if tentativa < SCHEMA_ATTEMPTS - 1:
                     prompt = _repair_prompt(prompt, out.text, e)
                 continue

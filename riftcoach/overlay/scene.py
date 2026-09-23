@@ -15,9 +15,10 @@ para o momento. A pessoa le, olha, e ve acontecer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Literal
 
-from riftcoach.core.schema import Mark
+from riftcoach.core.schema import Mark, Stroke
 from riftcoach.overlay.atalhos import TODOS as ATALHOS
 from riftcoach.overlay.geometry import MinimapProjector, Rect, minimap_rect
 
@@ -152,11 +153,20 @@ class OverlayState:
     # (a Riot so entrega um a cada 60 s). Vazio = sem anotacao de minimapa.
     focus_track: list[tuple[int, float, float]] = field(default_factory=list)
     focus_champion: str = ""
+    match_id: str = ""
     # Ligar/desligar cada camada. A regua incomoda menos que o cartao, entao
     # quem quiser so o essencial desliga o cartao e fica com ela.
     show_ruler: bool = True
     show_card: bool = True
     show_minimap: bool = True
+    # Os desenhos a mao deste instante, ja filtrados por quem chama, mais o
+    # traco em andamento (que ainda nao virou `Stroke` porque o botao nao
+    # soltou).
+    strokes: list[Stroke] = field(default_factory=list)
+    traco_em_andamento: list[tuple[float, float]] = field(default_factory=list)
+    cor_do_pincel: str = ""
+    espessura_do_pincel: float = 0.0
+    modo_desenho: bool = False
 
     @property
     def u(self) -> float:
@@ -623,6 +633,86 @@ def _minimapa(st: OverlayState, m: Mark | None) -> list[Primitive]:
 # --------------------------------------------------------------------------
 
 
+def _desenhos(st: OverlayState) -> list[Primitive]:
+    """Os tracos a mao, convertidos de fracao da tela para pixel.
+
+    A conversao acontece aqui, e so aqui, porque este e o unico ponto que
+    conhece a resolucao atual. Guardar pixel na revisao faria o desenho
+    encolher num canto ao reabrir o replay noutra tela.
+    """
+    out: list[Primitive] = []
+    largura, altura = float(st.width), float(st.height)
+
+    def em_pixel(pontos: list[tuple[float, float]], cor: str, esp: float) -> None:
+        for (x1, y1), (x2, y2) in pairwise(pontos):
+            out.append(
+                Line(x1 * largura, y1 * altura, x2 * largura, y2 * altura, color=cor, width=esp)
+            )
+
+    for s in st.strokes:
+        em_pixel(list(s.points), s.color, s.width)
+    if len(st.traco_em_andamento) >= 2:
+        em_pixel(
+            st.traco_em_andamento,
+            st.cor_do_pincel or COR_CRITICO,
+            st.espessura_do_pincel or 4.0,
+        )
+    return out
+
+
+def _barra_do_pincel(st: OverlayState) -> list[Primitive]:
+    """A faixa que aparece enquanto o pincel esta ligado.
+
+    Ela tem de ser inconfundivel: no modo desenho o clique NAO chega mais ao
+    jogo, e alguem que nao perceba que entrou nele vai achar que o League
+    travou.
+    """
+    u = st.u
+    fonte = max(9.0, 0.016 * u)
+    alt = fonte * 2.6
+    y = st.height - alt
+    out: list[Primitive] = [
+        Box(Rect(0.0, y, float(st.width), alt), fill="#161b22", outline=COR_CRITICO, width=2.0)
+    ]
+    x = 0.02 * st.width
+    meio = y + alt / 2
+    out.append(
+        Label(x, meio, "PINCEL LIGADO", color=COR_CRITICO, size=fonte, bold=True, anchor="w")
+    )
+    x += fonte * 9.5
+
+    from riftcoach.overlay.desenho import CORES
+
+    for i, (cor, _) in enumerate(CORES):
+        r = fonte * (0.62 if cor != st.cor_do_pincel else 0.85)
+        out.append(
+            Circle(
+                x,
+                meio,
+                r,
+                fill=cor,
+                outline="#ffffff" if cor == st.cor_do_pincel else "#000000",
+                width=2.0,
+            )
+        )
+        out.append(
+            Label(x, meio + fonte * 1.15, str(i + 1), color=COR_FRACO, size=fonte * 0.7, anchor="n")
+        )
+        x += fonte * 2.1
+
+    out.append(
+        Label(
+            float(st.width) - 0.02 * st.width,
+            meio,
+            "arraste para desenhar  ·  Z desfaz  ·  C limpa  ·  Ctrl+Alt+D sai",
+            color=COR_TEXTO,
+            size=fonte * 0.8,
+            anchor="e",
+        )
+    )
+    return out
+
+
 def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
     """A cena inteira para este instante.
 
@@ -634,6 +724,11 @@ def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
     """
     sc = Scene()
     sc.add(*_regua(st, now_ms))
+    # Os desenhos ficam por BAIXO dos cartoes: eles apontam para o jogo, e um
+    # rabisco cruzando o texto do diagnostico atrapalha os dois.
+    sc.add(*_desenhos(st))
+    if st.modo_desenho:
+        sc.add(*_barra_do_pincel(st))
     if boas_vindas:
         # Ele ocupa o lugar do cartao de erro, e por isso suprime os dois. Nos
         # primeiros segundos "o que e isto" importa mais que qualquer erro —

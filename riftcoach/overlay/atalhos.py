@@ -45,16 +45,23 @@ NAVEGAR = (
     Atalho(0x52, "Ctrl+Alt+R", "voltar para onde você parou"),
 )
 
+FERRAMENTAS = (
+    Atalho(0x44, "Ctrl+Alt+D", "pincel: desenhar por cima do replay"),
+    Atalho(0x50, "Ctrl+Alt+P", "salvar um print do momento, com os desenhos"),
+)
+
 JANELA = (
     Atalho(0x41, "Ctrl+Alt+A", "abrir e fechar esta ajuda"),
     Atalho(0x48, "Ctrl+Alt+H", "esconder o overlay"),
 )
 
-TODOS = MARCAR + NAVEGAR + JANELA
+TODOS = MARCAR + NAVEGAR + FERRAMENTAS + JANELA
 
 # Atalhos individuais, para quem precisa comparar contra um codigo especifico.
 VK_SEGUINTE = NAVEGAR[0].vk
 VK_RETOMAR = NAVEGAR[1].vk
+VK_PINCEL = FERRAMENTAS[0].vk
+VK_PRINT = FERRAMENTAS[1].vk
 VK_AJUDA = JANELA[0].vk
 VK_OCULTAR = JANELA[1].vk
 

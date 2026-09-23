@@ -53,7 +53,18 @@ class _Entry:
     # resolve. Falha de verdade nao melhora com paciencia.
     por_cota: bool = False
     backoff_s: float = BACKOFF_START_S
-    schema_violations: int = 0
+    # EM QUAIS TAREFAS o schema falhou, e nao quantas vezes ao todo.
+    #
+    # A contagem simples estava errada de um jeito caro: ela era global e o
+    # sucesso nunca a zerava, entao um modelo que acertava nove vezes e
+    # tropecava em tres era descartado. Pior: as tres podiam ser do MESMO
+    # analista tentando o mesmo prompt dificil, e ai o provedor morria para
+    # os outros tres, que nem tinham sido tentados.
+    #
+    # Falhar em tres tarefas DIFERENTES e evidencia de que o modelo nao
+    # sustenta o nosso schema. Falhar tres vezes na mesma e evidencia de que
+    # aquele prompt e dificil.
+    schema_falhou_em: set[str] = field(default_factory=set)
     last_reason: str = ""
 
 
@@ -96,6 +107,11 @@ class ProviderBreaker:
         e.state = BreakerState.CLOSED
         e.backoff_s = BACKOFF_START_S
         e.open_until = 0.0
+        e.por_cota = False
+        # Sucesso e prova de que ele SABE fazer o nosso schema. Sem zerar aqui,
+        # tropecos avulsos ao longo de uma sessao longa somariam ate o descarte
+        # de um provedor que funciona.
+        e.schema_falhou_em.clear()
         e.last_reason = ""
 
     def record_quota(self, provider: str, retry_after_s: float | None) -> None:
@@ -139,15 +155,20 @@ class ProviderBreaker:
         e.open_until = self._clock() + e.backoff_s
         e.last_reason = f"falha transitoria ({detail or 'sem detalhe'}); recuo {e.backoff_s:.0f}s"
 
-    def record_schema_violation(self, provider: str, detail: str = "") -> None:
-        """O modelo devolveu algo que nao valida contra o nosso schema."""
+    def record_schema_violation(self, provider: str, task: str = "", detail: str = "") -> None:
+        """O modelo devolveu algo que nao valida contra o nosso schema.
+
+        So descarta o provedor quando ele falha em tarefas DIFERENTES — ver o
+        comentario em `_Entry.schema_falhou_em`.
+        """
         e = self._entry(provider)
-        e.schema_violations += 1
-        if e.schema_violations >= SCHEMA_STRIKES:
+        e.schema_falhou_em.add(task or "?")
+        if len(e.schema_falhou_em) >= SCHEMA_STRIKES:
             e.state = BreakerState.BURNED
             e.last_reason = (
                 f"este modelo nao sustenta o nosso schema de saida "
-                f"({e.schema_violations} violacoes); descartado nesta sessao"
+                f"(falhou em {len(e.schema_falhou_em)} tarefas diferentes); "
+                f"descartado nesta sessao"
             )
             log_compatibility(provider, "schema_exhausted", detail)
 
@@ -252,6 +273,24 @@ class RateLimiter:
             # estimou deixa divida, e a divida atrasa a proxima. Zerar aqui
             # perdoaria o excesso e levaria a um 429 de verdade.
             b.tokens_livres -= tokens
+
+    def sincronizar_tokens(self, provider: str, restantes: int) -> None:
+        """Adota o saldo que o PROVEDOR informou.
+
+        O balde local comeca cheio a cada execucao; o do provedor nao, porque
+        e por minuto e compartilhado entre processos. Rodar a analise duas
+        vezes seguidas fazia a segunda sair mandando com o balde local cheio e
+        o real vazio, e levar 429 de cara.
+
+        So aceita para MENOS. O cabecalho e lido depois da resposta, entao ele
+        ja esta velho quando chega; deixa-lo aumentar o saldo desfaria um
+        consumo que acabou de acontecer.
+        """
+        b = self._buckets.get(provider)
+        if b is None or b.limit.tokens is None:
+            return
+        self._refill(b)
+        b.tokens_livres = min(b.tokens_livres, float(max(0, restantes)))
 
     def seconds_until_budget(self, provider: str, tokens: int = 0) -> float:
         """Quanto falta ate caber uma chamada de `tokens`.

@@ -949,6 +949,8 @@ def overlay(
         Ctrl+Alt+Q   marcar uma duvida
         Ctrl+Alt+S   pular para a proxima marcacao
         Ctrl+Alt+R   voltar para onde voce parou
+        Ctrl+Alt+D   pincel: desenhar por cima do replay
+        Ctrl+Alt+P   salvar um print do momento, com os desenhos
         Ctrl+Alt+A   abrir e fechar a ajuda NA TELA, a qualquer momento
         Ctrl+Alt+H   esconder o overlay
 

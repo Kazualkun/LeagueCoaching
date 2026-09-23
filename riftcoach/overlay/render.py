@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import font as tkfont
 
 from riftcoach.overlay import window as win
@@ -222,6 +223,56 @@ class OverlayWindow:
                 anchor=it.anchor,
             )
         self.canvas.create_text(it.x, it.y, text=it.text, fill=it.color, font=f, anchor=it.anchor)
+
+    # ----------------------------------------------------------------
+    # Modo desenho
+    # ----------------------------------------------------------------
+
+    def modo_desenho(
+        self,
+        ligado: bool,
+        *,
+        ao_comecar: Callable[[float, float], None] | None = None,
+        ao_mover: Callable[[float, float], None] | None = None,
+        ao_soltar: Callable[[], None] | None = None,
+        ao_teclar: Callable[[str], None] | None = None,
+    ) -> None:
+        """Liga o pincel: a janela para de atravessar o clique e passa a ouvir.
+
+        As coordenadas chegam ao chamador em FRACAO da janela, e nao em pixel.
+        Converter aqui, no unico lugar que conhece o tamanho real, evita que a
+        logica do pincel precise saber de resolucao — e e o que faz um desenho
+        sobreviver a abrir o replay noutra tela.
+        """
+        if not self._hwnd:
+            return
+        win.set_click_through(self._hwnd, not ligado)
+        if not ligado:
+            for evento in ("<Button-1>", "<B1-Motion>", "<ButtonRelease-1>", "<Key>"):
+                self.canvas.unbind(evento)
+                self.root.unbind(evento)
+            self.canvas.configure(cursor="")
+            return
+
+        self.canvas.configure(cursor="crosshair")
+        # Foco de verdade: sem ele as teclas de cor nao chegam.
+        self.root.attributes("-topmost", True)
+        with contextlib.suppress(tk.TclError):
+            self.root.focus_force()
+
+        def fracao(e: tk.Event[tk.Misc]) -> tuple[float, float]:
+            larg = max(1, self.canvas.winfo_width())
+            alt = max(1, self.canvas.winfo_height())
+            return e.x / larg, e.y / alt
+
+        if ao_comecar is not None:
+            self.canvas.bind("<Button-1>", lambda e: ao_comecar(*fracao(e)))
+        if ao_mover is not None:
+            self.canvas.bind("<B1-Motion>", lambda e: ao_mover(*fracao(e)))
+        if ao_soltar is not None:
+            self.canvas.bind("<ButtonRelease-1>", lambda _e: ao_soltar())
+        if ao_teclar is not None:
+            self.root.bind("<Key>", lambda e: ao_teclar(e.keysym))
 
     def bombear(self) -> None:
         """Deixa o tkinter respirar sem entregar o controle do laco."""

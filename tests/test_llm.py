@@ -156,23 +156,50 @@ def test_success_resets_the_backoff() -> None:
     assert b.is_closed("ollama"), "o recuo devia ter voltado ao inicial"
 
 
-def test_three_schema_violations_burn_the_model_for_the_session() -> None:
+def test_falhar_o_schema_em_tarefas_diferentes_queima_o_modelo() -> None:
     """O caso que mais importa: um modelo que nao sustenta o nosso JSON queima
     a cota diaria inteira em retentativas e nao produz nada."""
     b = ProviderBreaker(FakeClock())
-    for _ in range(SCHEMA_STRIKES):
-        b.record_schema_violation("groq:llama", "campo severity invalido")
+    for tarefa in ("laning_analyst", "macro_analyst", "fights_analyst"):
+        b.record_schema_violation("groq:llama", tarefa, "campo severity invalido")
     assert b.state("groq:llama") is BreakerState.BURNED
     assert not b.is_closed("groq:llama")
     assert "schema" in b.reason("groq:llama")
+
+
+def test_falhar_tres_vezes_na_MESMA_tarefa_nao_queima() -> None:
+    """A regra antiga contava violacoes, nao tarefas — e era cara: os tres
+    tropecos podiam ser do MESMO analista insistindo no mesmo prompt dificil,
+    e o provedor morria para os outros tres, que nem tinham sido tentados.
+
+    Tres falhas na mesma tarefa sao evidencia de que aquele prompt e dificil.
+    Tres em tarefas diferentes sao evidencia sobre o modelo.
+    """
+    b = ProviderBreaker(FakeClock())
+    for _ in range(SCHEMA_STRIKES + 2):
+        b.record_schema_violation("groq:llama", "laning_analyst")
+    assert b.state("groq:llama") is not BreakerState.BURNED
+    assert b.is_closed("groq:llama")
+
+
+def test_um_sucesso_limpa_os_tropecos_anteriores() -> None:
+    """Sucesso e prova de que ele SABE fazer o nosso schema. Sem zerar, falhas
+    avulsas ao longo de uma sessao longa somariam ate descartar um provedor
+    que funciona."""
+    b = ProviderBreaker(FakeClock())
+    b.record_schema_violation("groq:llama", "laning_analyst")
+    b.record_schema_violation("groq:llama", "macro_analyst")
+    b.record_success("groq:llama")
+    b.record_schema_violation("groq:llama", "fights_analyst")
+    assert b.is_closed("groq:llama"), "a contagem recomecou depois do sucesso"
 
 
 def test_a_burned_model_does_not_come_back_on_success() -> None:
     """O problema nao era disponibilidade, era capacidade. Sucesso em outra
     coisa nao prova que ele passou a sustentar o schema."""
     b = ProviderBreaker(FakeClock())
-    for _ in range(SCHEMA_STRIKES):
-        b.record_schema_violation("groq:llama")
+    for tarefa in ("a", "b", "c"):
+        b.record_schema_violation("groq:llama", tarefa)
     b.record_success("groq:llama")
     assert b.state("groq:llama") is BreakerState.BURNED
 
@@ -434,12 +461,30 @@ async def test_validated_output_repairs_then_succeeds() -> None:
 
 @pytest.mark.asyncio
 async def test_a_model_that_never_validates_is_given_up_on() -> None:
+    """Uma tarefa que nao valida desiste dela — e NAO condena o provedor.
+
+    Condenar aqui foi o que fez um analista dificil derrubar os outros tres.
+    """
     p = FakeProvider(_profile("groq"), ["nao sou json"] * 5)
     r = _router(p)
     with pytest.raises(SchemaExhausted) as ex:
         await r.complete_validated(text_task("t", 500), "prompt", AnalystOutput)
     assert "sem IA" in (ex.value.hint or "") or "L5" in (ex.value.hint or "")
-    assert r.guard.breaker.state("groq") is BreakerState.BURNED
+    assert r.guard.breaker.is_closed("groq"), "o provedor continua servindo outras tarefas"
+
+
+@pytest.mark.asyncio
+async def test_um_analista_dificil_nao_derruba_os_outros() -> None:
+    """O sintoma real: `laning` falhava o schema tres vezes e os analistas
+    seguintes liam "nenhum provedor atende a tarefa"."""
+    p = FakeProvider(_profile("groq"), ["nao sou json"] * 3 + ['{"findings": []}'])
+    r = _router(p)
+    with pytest.raises(SchemaExhausted):
+        await r.complete_validated(text_task("laning_analyst", 500), "p", AnalystOutput)
+
+    # O proximo analista tem de conseguir rodar.
+    out = await r.complete_validated(text_task("fights_analyst", 500), "p", AnalystOutput)
+    assert out.findings == []
 
 
 @pytest.mark.asyncio
@@ -1080,3 +1125,42 @@ def test_falha_de_verdade_nao_vira_espera() -> None:
     cb = ProviderBreaker(clock=lambda: 0.0)
     cb.record_transient("groq", "connection refused")
     assert cb.segundos_ate_fechar_por_cota("groq") is None
+
+
+def test_o_balde_local_adota_o_saldo_real_do_provedor() -> None:
+    """O balde local comeca cheio a cada execucao; o do provedor nao, porque e
+    por minuto e compartilhado entre processos. Rodar a analise duas vezes
+    seguidas fazia a segunda sair mandando com o balde cheio e o real vazio."""
+    from riftcoach.llm.base import RateLimit
+    from riftcoach.llm.breaker import RateLimiter
+
+    lim = RateLimiter(clock=lambda: 0.0)
+    lim.register("groq", RateLimit(requests=1000, window_s=60.0, tokens=8000))
+    assert lim.has_budget("groq", 4200)
+
+    lim.sincronizar_tokens("groq", 900)
+    assert not lim.has_budget("groq", 4200), "o provedor disse que so restam 900"
+
+
+def test_o_saldo_informado_nunca_aumenta_o_balde() -> None:
+    """O cabecalho e lido DEPOIS da resposta, entao ja chega velho. Deixa-lo
+    subir o saldo desfaria um consumo que acabou de acontecer."""
+    from riftcoach.llm.base import RateLimit
+    from riftcoach.llm.breaker import RateLimiter
+
+    lim = RateLimiter(clock=lambda: 0.0)
+    lim.register("groq", RateLimit(requests=1000, window_s=60.0, tokens=8000))
+    lim.consume("groq", 7000)  # restam 1000
+
+    lim.sincronizar_tokens("groq", 8000)  # cabecalho velho, de antes da chamada
+    assert not lim.has_budget("groq", 4200), "o saldo nao pode voltar a subir"
+
+
+def test_provedor_sem_cabecalho_de_cota_nao_e_afetado() -> None:
+    """A maioria nao publica cota, e inventar zero ali faria o limitador parar
+    de mandar para sempre."""
+    from riftcoach.llm.providers.openai_compat import _inteiro
+
+    assert _inteiro(None) is None
+    assert _inteiro("nao sou numero") is None
+    assert _inteiro("7912") == 7912

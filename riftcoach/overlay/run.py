@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from riftcoach.config import data_dir
 from riftcoach.core.errors import LiveGameRefused
 from riftcoach.core.review import add_user_mark, save_session
 from riftcoach.core.schema import ReviewSession
@@ -33,9 +34,12 @@ from riftcoach.overlay.atalhos import (
     VK_CONTROL,
     VK_MENU,
     VK_OCULTAR,
+    VK_PINCEL,
+    VK_PRINT,
     VK_RETOMAR,
     VK_SEGUINTE,
 )
+from riftcoach.overlay.desenho import Prancheta, apagar_ultimo, limpar_instante
 from riftcoach.overlay.geometry import Rect
 from riftcoach.overlay.render import OverlayWindow
 from riftcoach.overlay.scene import OverlayState, build
@@ -161,9 +165,44 @@ async def executar(
         aberto_em = time.monotonic()
         ja_apareceu = False
         ajuda = False
+        prancheta = Prancheta()
         retomar_de = rs.last_position_ms if rs and rs.last_position_ms > 0 else None
         if retomar_de:
             log(f"voce parou em {_mmss(retomar_de)} — Ctrl+Alt+R volta para la")
+
+        # O instante em que o pincel foi ligado. Os tracos ficam amarrados a
+        # ELE, e nao ao relogio corrente: com o replay pausado os dois sao o
+        # mesmo, mas se alguem despausar no meio do desenho a anotacao tem de
+        # continuar pertencendo ao momento que estava sendo analisado.
+        instante_do_pincel = 0
+
+        def ao_comecar(x: float, y: float) -> None:
+            prancheta.comecar(x, y)
+
+        def ao_mover(x: float, y: float) -> None:
+            prancheta.mover(x, y)
+
+        def ao_soltar() -> None:
+            traco = prancheta.terminar(instante_do_pincel)
+            if traco is None or rs is None:
+                prancheta.descartar()
+                return
+            rs.strokes.append(traco)
+            save_session(rs)
+
+        def ao_teclar(tecla: str) -> None:
+            if rs is None:
+                return
+            if tecla.isdigit() and prancheta.usar_cor(int(tecla) - 1):
+                return
+            if tecla.lower() == "z":
+                if apagar_ultimo(rs.strokes, instante_do_pincel) is not None:
+                    save_session(rs)
+            elif tecla.lower() == "c":
+                if limpar_instante(rs.strokes, instante_do_pincel):
+                    save_session(rs)
+            elif tecla.lower() == "x":
+                prancheta.proxima_espessura()
 
         while True:
             hwnd = win.find_league_window()
@@ -214,8 +253,21 @@ async def executar(
                 break
 
             agora_ms = cal.to_timeline_ms(pb.time)
-            # O painel aparece sozinho no comeco e sob demanda depois.
-            painel = ajuda or (time.monotonic() - aberto_em) < BOAS_VINDAS_S
+            # Os desenhos deste instante. Com o pincel ligado o instante e o em
+            # que ele foi ligado — senao o traco sairia de cena enquanto ainda
+            # esta sendo feito.
+            alvo_dos_tracos = instante_do_pincel if st.modo_desenho else agora_ms
+            if rs is not None:
+                st.strokes = rs.strokes_em(alvo_dos_tracos)
+            st.traco_em_andamento = prancheta.em_andamento
+            st.cor_do_pincel = prancheta.cor
+            st.espessura_do_pincel = prancheta.espessura
+
+            # O painel aparece sozinho no comeco e sob demanda depois. No modo
+            # desenho ele sai da frente: a tela toda e a lousa.
+            painel = not st.modo_desenho and (
+                ajuda or (time.monotonic() - aberto_em) < BOAS_VINDAS_S
+            )
             overlay.desenhar(build(st, agora_ms, boas_vindas=painel))
             overlay.bombear()
             res.quadros += 1
@@ -230,6 +282,34 @@ async def executar(
                         # primeiros segundos: quem abriu o overlay no minuto
                         # vinte nunca viu o cartao de apresentacao.
                         ajuda = not ajuda
+                    elif vk == VK_PINCEL:
+                        st.modo_desenho = not st.modo_desenho
+                        if st.modo_desenho:
+                            instante_do_pincel = agora_ms
+                            # PAUSA ANTES DE DESENHAR. Rabiscar sobre imagem em
+                            # movimento e rabiscar no lugar errado: quando o
+                            # circulo fecha, o campeao ja saiu de dentro dele.
+                            with contextlib.suppress(LiveGameRefused):
+                                await ctrl.pause()
+                            overlay.modo_desenho(
+                                True,
+                                ao_comecar=ao_comecar,
+                                ao_mover=ao_mover,
+                                ao_soltar=ao_soltar,
+                                ao_teclar=ao_teclar,
+                            )
+                            log(f"pincel ligado em {_mmss(instante_do_pincel)}")
+                        else:
+                            prancheta.descartar()
+                            overlay.modo_desenho(False)
+                            log("pincel desligado")
+                    elif vk == VK_PRINT:
+                        destino = _salvar_print(rect, st.match_id, agora_ms)
+                        log(
+                            f"print salvo em {destino}"
+                            if destino
+                            else "nao consegui salvar o print (falta a camada de imagem)"
+                        )
                     elif vk in (VK_RETOMAR, VK_SEGUINTE):
                         alvo = (
                             retomar_de if vk == VK_RETOMAR else _proxima_marca_depois(st, agora_ms)
@@ -379,3 +459,31 @@ async def demonstrar(segundos: float = 15.0, log: Callable[[str], None] = print)
     finally:
         overlay.fechar()
     return res
+
+
+def _salvar_print(rect: Rect, match_id: str, t_ms: int) -> str | None:
+    """Fotografa a area do jogo, com o overlay por cima, e grava em disco.
+
+    E o que o pedido chamou de "como um print": a jogada, o cartao do erro e o
+    rabisco na mesma imagem, pronta para mandar para alguem. A captura e da
+    TELA, entao ela ja pega o overlay — nao ha composicao a fazer, e por isso
+    o que sai e exatamente o que se viu.
+
+    Depende do PIL, que e do extra `vision`. Sem ele devolve None em vez de
+    estourar: perder o print e chato, perder a revisao seria pior.
+    """
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        return None
+
+    pasta = data_dir() / "prints"
+    pasta.mkdir(parents=True, exist_ok=True)
+    nome = f"{match_id or 'partida'}_{t_ms // 60_000:02d}m{(t_ms // 1000) % 60:02d}s.png"
+    destino = pasta / nome
+    caixa = (int(rect.x), int(rect.y), int(rect.right), int(rect.bottom))
+    try:
+        ImageGrab.grab(bbox=caixa).save(destino)
+    except (OSError, ValueError):
+        return None
+    return str(destino)

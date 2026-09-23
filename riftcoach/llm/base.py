@@ -134,6 +134,14 @@ class Completion:
     # vale tentar de novo: um provedor com garantia forte que errou o schema
     # nao vai acertar na segunda.
     schema_enforced: bool = False
+    # Quanto de cota de TOKENS o provedor diz que ainda resta nesta janela.
+    #
+    # Existe porque o nosso balde local comeca cheio a cada execucao, e o do
+    # provedor nao: ele e por minuto e compartilhado entre processos. Rodar a
+    # analise duas vezes seguidas fazia a segunda sair mandando com o balde
+    # local cheio e o real vazio — e levar 429 de cara. Com este numero, o
+    # balde local passa a acompanhar a realidade em vez de adivinha-la.
+    remaining_tokens: int | None = None
 
 
 class Provider(Protocol):

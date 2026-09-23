@@ -155,13 +155,30 @@ def make_click_through(hwnd: int) -> None:
     cartao no meio da tela bloquearia justamente a area onde a pessoa clica
     para controlar o replay.
     """
+    set_click_through(hwnd, True)
+
+
+def set_click_through(hwnd: int, atravessa: bool) -> None:
+    """Liga e desliga a transparencia ao mouse.
+
+    DESLIGAR e o que permite desenhar: para receber o arrasto do ponteiro a
+    janela precisa deixar de ser atravessavel e passar a poder ganhar foco.
+    Fora do modo desenho ela volta a atravessar, porque um overlay que come
+    cliques e pior que nenhum overlay — ele bloquearia justamente a barra onde
+    se controla o replay.
+
+    `WS_EX_NOACTIVATE` sai junto com `WS_EX_TRANSPARENT`: sem poder ativar, a
+    janela nao recebe teclado, e o modo desenho precisa das teclas de cor.
+    """
     if not disponivel():
         return
     u = ctypes.windll.user32
     u.SetWindowLongW.restype = ctypes.c_long
-    atual = u.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
-    u.SetWindowLongW(
-        wintypes.HWND(hwnd),
-        GWL_EXSTYLE,
-        atual | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+    atual = int(u.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE))
+    passa_clique = WS_EX_TRANSPARENT | WS_EX_NOACTIVATE
+    novo = (
+        atual | WS_EX_LAYERED | WS_EX_TOOLWINDOW | passa_clique
+        if atravessa
+        else (atual | WS_EX_LAYERED | WS_EX_TOOLWINDOW) & ~passa_clique
     )
+    u.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, novo)
