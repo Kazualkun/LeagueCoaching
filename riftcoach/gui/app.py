@@ -17,6 +17,7 @@ nao para organizar codigo.
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import sys
 import threading
@@ -608,16 +609,17 @@ class App:
                 try:
                     serve(port=PORTA_WEB, open_browser=False)
                 except BaseException as e:
-                    # uvicorn desiste com sys.exit() quando nao consegue
-                    # ligar na porta — o caso comum e OUTRA janela do
-                    # RiftCoach ja aberta e servindo ali. Sem isto o erro
-                    # morre aqui: pythonw nao tem console, a mensagem do
-                    # uvicorn nao vai a lugar nenhum, e o botao so parece
-                    # nao fazer nada.
+                    # Todo erro daqui morria em silencio, e foi o que fez o
+                    # botao "nao fazer nada" por tanto tempo: sob pythonw nao
+                    # ha stderr, entao nem a excecao nem o log do uvicorn
+                    # chegavam a lugar nenhum. Qualquer falha precisa voltar
+                    # para a barra de status, que e a unica saida que existe.
+                    # SystemExit e como o uvicorn desiste quando nao consegue
+                    # ligar na porta — em geral outro programa ja esta nela.
                     self._servidor_no_ar = False
                     msg = (
-                        "já tem outra janela do RiftCoach aberta — feche as "
-                        "outras ou use o relatório por lá"
+                        f"a porta {PORTA_WEB} já está ocupada por outro "
+                        "programa — feche-o e tente de novo"
                         if isinstance(e, SystemExit)
                         else f"o servidor não subiu: {e}"
                     )
@@ -742,5 +744,25 @@ class App:
         self.root.mainloop()
 
 
+def _garante_saidas() -> None:
+    """Da a `sys.stdout`/`sys.stderr` um destino valido quando nao ha console.
+
+    Aberto por dois cliques, o RiftCoach roda sob `pythonw.exe`, e ali os dois
+    sao None — nao um arquivo fechado, None mesmo. Qualquer biblioteca que
+    assuma que existe um stream quebra, e quebra longe daqui: o uvicorn
+    estourava em `sys.stdout.isatty()` montando o log colorido, ANTES de ligar
+    na porta. O servidor nunca subia, e como nao havia stderr, a mensagem nao
+    tinha para onde ir — o botao do relatorio simplesmente nao fazia nada.
+    """
+    for nome in ("stdout", "stderr"):
+        if getattr(sys, nome, None) is None:
+            # Sem `with`: este stream precisa durar o processo inteiro, e
+            # fecha-lo traria o bug de volta. Um arquivo de verdade, e nao uma
+            # classe falsa, porque bibliotecas chamam mais que write() —
+            # fileno() e flush() entre elas.
+            setattr(sys, nome, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115
+
+
 def main() -> None:
+    _garante_saidas()
     App().rodar()

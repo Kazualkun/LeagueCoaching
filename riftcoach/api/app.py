@@ -335,13 +335,27 @@ def esta_no_ar(port: int, host: str = HOST) -> bool:
 
 def serve(port: int = 8770, open_browser: bool = True) -> None:
     """Sobe o servidor. SO em 127.0.0.1 — ver o escopo no topo do modulo."""
+    import sys
+
     import uvicorn
 
     app = create_app()
     url = f"http://{HOST}:{port}/"
     if open_browser:
         webbrowser.open(url)
-    uvicorn.run(app, host=HOST, port=port, log_level="warning")
+    # Sem console (pythonw), sys.stdout e None e o formatter do uvicorn morre
+    # em `sys.stdout.isatty()` — antes de ligar na porta. Sem stream nao ha
+    # log para configurar, entao a configuracao inteira sai de cena. Quem
+    # chama daqui ja costuma arrumar os streams; esta funcao nao depende
+    # disso porque quem quebrava era ela.
+    sem_saida = sys.stdout is None or sys.stderr is None
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=port,
+        log_level="warning",
+        log_config=None if sem_saida else uvicorn.config.LOGGING_CONFIG,
+    )
 
 
 def session_as_dict() -> dict[str, Any]:

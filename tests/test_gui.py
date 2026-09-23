@@ -134,16 +134,41 @@ def test_a_tela_final_oferece_os_dois_caminhos(app: App) -> None:
     assert any("7 momentos marcados" in t for t in textos)
 
 
+def test_sem_console_as_saidas_ganham_destino(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A causa raiz do botao que "nao fazia nada".
+
+    Aberto por dois cliques, o RiftCoach roda sob pythonw, e ali sys.stdout e
+    sys.stderr sao None. O uvicorn monta o log colorido com
+    `sys.stdout.isatty()` e estoura ANTES de ligar na porta: o servidor nunca
+    subia, e sem stderr a mensagem nao tinha para onde ir. Rodando pelo
+    console nada disso aparece — por isso passou tanto tempo escondido.
+    """
+    import sys as _sys
+
+    from riftcoach.gui.app import _garante_saidas
+
+    monkeypatch.setattr(_sys, "stdout", None)
+    monkeypatch.setattr(_sys, "stderr", None)
+    _garante_saidas()
+
+    # O que importa nao e o valor de isatty() — no Windows o `nul` e um
+    # dispositivo de caractere e responde True, o que so faz o uvicorn
+    # escrever cor para o vazio. O que importa e que a chamada EXISTA: era
+    # ela, em None, que derrubava o servidor antes de ele ligar na porta.
+    for saida in (_sys.stdout, _sys.stderr):
+        assert saida is not None
+        assert isinstance(saida.isatty(), bool)
+        saida.write("descartado")
+
+
 def test_relatorio_avisa_quando_a_porta_ja_esta_em_uso(
     app: App, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reproduz o bug real: duas janelas do RiftCoach abertas ao mesmo tempo.
+    """Falha ao subir o servidor nao pode morrer calada.
 
-    A segunda nao consegue subir o servidor (porta ja ocupada pela primeira),
-    uvicorn desiste com sys.exit(), e sem tratamento esse erro morria
-    silencioso — pythonw nao tem console para mostra-lo, e o botao so
-    parecia nao fazer nada. Agora vira aviso na barra de status, e o botao
-    pode ser tentado de novo.
+    Sob pythonw nao ha stderr: o uvicorn desiste com sys.exit(), a thread
+    morre, e sem tratamento o botao so parecia nao fazer nada. Agora vira
+    aviso na barra de status, e o botao aceita nova tentativa.
     """
     from types import SimpleNamespace
 
@@ -164,11 +189,11 @@ def test_relatorio_avisa_quando_a_porta_ja_esta_em_uso(
     limite = time.time() + 2
     while time.time() < limite:
         app._bombear()
-        if "outra janela" in app.status.cget("text"):
+        if "ocupada" in app.status.cget("text"):
             break
         time.sleep(0.02)
 
-    assert "outra janela" in app.status.cget("text")
+    assert "ocupada" in app.status.cget("text")
     assert app._servidor_no_ar is False
 
 
