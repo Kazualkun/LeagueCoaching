@@ -117,18 +117,6 @@ class AnalystOutput(BaseModel):
     findings: list[AnalystFinding] = Field(default_factory=list, max_length=3)
 
 
-class CompletoOutput(BaseModel):
-    """A saida do passe unico.
-
-    Teto maior porque ele cobre QUATRO angulos, e nao um. Com o teto de 3 do
-    analista comum ele entregaria uma partida inteira em tres frases — e o
-    proprio prompt pede que pelo menos tres dos quatro angulos aparecam, o que
-    nao cabe em tres findings sem espremer.
-    """
-
-    findings: list[AnalystFinding] = Field(default_factory=list, max_length=8)
-
-
 class HeadCoachPick(BaseModel):
     """O head coach escolhe por REFERENCIA, nao reescrevendo.
 
@@ -312,25 +300,32 @@ async def _passe_completo(
 ) -> AnalysisResult:
     """Os quatro angulos numa chamada so.
 
-    Entrega menos profundidade por angulo que quatro passes dedicados — e
-    entrega, o que os quatro passes nao fazem quando a cota nao alcanca. Um
-    relatorio com quatro angulos rasos vale mais que dois angulos fundos e
-    dois erros de cota.
+    TRES FINDINGS, E NAO OITO, e o numero saiu de uma medicao que custou caro
+    descobrir. Contra o Groq, este passe consome:
+
+        entrada 4.661  +  saida reservada 2.048  =  6.709   (teto: 8.000)
+
+    Pedir oito findings exigiria perto de 3.500 tokens de saida, e o total
+    passaria de 8.161 — nao cabe. Sem espaco, o modelo responde ate o teto e o
+    JSON sai CORTADO NO MEIO: o segundo finding chega sem o campo `fix`, a
+    validacao recusa, e a analise inteira se perde por truncamento.
+
+    Entrega menos que quatro passes dedicados — e entrega, o que os quatro nao
+    fazem quando a cota nao alcanca. Tres findings de tres angulos diferentes,
+    somados aos deterministicos, valem mais que zero por erro de cota.
     """
     resultado = AnalysisResult()
     tarefa = text_task("analista_completo", CUSTO_POR_PASSE)
     prompt = f"{load_prompt('completo')}\n\n=== DADOS DA PARTIDA ===\n{packet.for_completo()}\n"
     try:
         completo = await router.complete_validated(
-            tarefa, prompt, CompletoOutput, system=load_prompt("_system")
+            tarefa, prompt, AnalystOutput, system=load_prompt("_system")
         )
     except (NoViableProvider, SchemaExhausted) as e:
         resultado.failures["completo"] = e.message
         return resultado
 
-    # `to_findings` so precisa de `.findings`, e os dois modelos o tem com o
-    # mesmo tipo de item — o que muda entre eles e so o teto.
-    conv = to_findings(AnalystOutput(findings=completo.findings), duracao_ms, "completo")
+    conv = to_findings(completo, duracao_ms, "completo")
     resultado.entities.update(dict(conv.entities.items()))
     resultado.by_analyst["completo"] = conv.findings
     resultado.findings.extend(conv.findings)

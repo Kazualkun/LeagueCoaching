@@ -1212,13 +1212,14 @@ def test_cota_apertada_troca_quatro_passes_por_um() -> None:
     assert _cabe_em_quatro_passes(_FakeRouter(None))  # type: ignore[arg-type]
 
 
-def test_o_passe_unico_pode_entregar_mais_findings() -> None:
-    """Ele cobre QUATRO angulos, e nao um. Com o teto de 3 do analista comum
-    entregaria uma partida inteira em tres frases."""
-    from riftcoach.analysis.analysts import AnalystOutput, CompletoOutput
+def test_o_teto_de_findings_cabe_na_cota() -> None:
+    """Medido: entrada 4.661 + saida reservada 2.048 = 6.709 contra um teto de
+    8.000. Pedir oito findings exigiria ~3.500 de saida e passaria de 8.161 —
+    a resposta sairia cortada no meio, sem o campo `fix` do segundo finding, e
+    a validacao descartaria a analise inteira."""
+    from riftcoach.analysis.analysts import AnalystOutput
 
     assert AnalystOutput.model_fields["findings"].metadata[0].max_length == 3
-    assert CompletoOutput.model_fields["findings"].metadata[0].max_length == 8
 
 
 def test_o_prompt_do_passe_unico_existe() -> None:
@@ -1229,3 +1230,4 @@ def test_o_prompt_do_passe_unico_existe() -> None:
     texto = load_prompt("completo")
     for palavra in ("Rota", "Macro", "Economia", "Lutas"):
         assert palavra in texto, f"o passe unico precisa cobrir {palavra}"
+    assert "TRES" in texto, "o teto de tres precisa estar no prompt, nao so no schema"

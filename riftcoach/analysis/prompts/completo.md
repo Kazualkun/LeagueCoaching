@@ -20,10 +20,18 @@ uma janela de cota.
 
 ## Como distribuir os findings
 
-Produza entre 4 e 8 findings no total, cobrindo pelo menos TRES dos quatro
-angulos. Nao gaste os quatro findings no mesmo tema so porque ele e o mais
-visivel: a pessoa ja sabe que morreu oito vezes; o que ela nao sabe e o que
-cada morte tinha em comum.
+Produza EXATAMENTE TRES findings, cada um de um angulo DIFERENTE. Tres, e nao
+mais: a cota do provedor nao comporta uma resposta maior, e uma resposta que
+estoura o limite sai cortada no meio e e descartada inteira — voce perde os
+tres.
+
+Escolha os tres angulos mais decisivos para esta partida e deixe o quarto de
+fora. Nao gaste os tres no mesmo tema so porque ele e o mais visivel: a pessoa
+ja sabe que morreu oito vezes; o que ela nao sabe e o que cada morte tinha em
+comum.
+
+Seja economico no texto. Uma frase por `claim`, uma por `fix`, no maximo duas
+evidencias por finding.
 
 Um finding por causa. Duas mortes pelo mesmo motivo sao UM finding que cita as
 duas, e nao dois findings parecidos.

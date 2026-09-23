@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from riftcoach.cli import _console_em_utf8
-from riftcoach.core.schema import Mark
+from riftcoach.core.schema import Mark, Stroke
 from riftcoach.overlay.preview import gerar
 from riftcoach.overlay.scene import OverlayState, build
 
@@ -184,6 +184,43 @@ def _tela_final(a: object) -> None:
     app.tela_pronto()  # type: ignore[attr-defined]
 
 
+MOMENTO_CRITICO = 14 * 60_000 + 54_000
+
+
+def _com_pincel(st: OverlayState) -> OverlayState:
+    """O mesmo estado, com o pincel ligado e um desenho de exemplo.
+
+    O desenho imita o que um treinador faz na lousa: circula o que estava
+    errado, e aponta para onde era para estar.
+    """
+    import math
+
+
+    st.modo_desenho = True
+    st.cor_do_pincel = "#ff453a"
+    st.espessura_do_pincel = 4.0
+    circulo = [
+        (0.24 + 0.055 * math.cos(a / 9 * 2 * math.pi), 0.50 + 0.085 * math.sin(a / 9 * 2 * math.pi))
+        for a in range(10)
+    ]
+    st.strokes = [
+        Stroke(t_ms=MOMENTO_CRITICO, points=circulo, color="#ff453a", width=4.0),
+        Stroke(
+            t_ms=MOMENTO_CRITICO,
+            points=[(0.30, 0.47), (0.40, 0.40), (0.47, 0.36)],
+            color="#ffd60a",
+            width=4.0,
+        ),
+        Stroke(
+            t_ms=MOMENTO_CRITICO, points=[(0.47, 0.36), (0.43, 0.38)], color="#ffd60a", width=4.0
+        ),
+        Stroke(
+            t_ms=MOMENTO_CRITICO, points=[(0.47, 0.36), (0.45, 0.41)], color="#ffd60a", width=4.0
+        ),
+    ]
+    return st
+
+
 def main() -> None:
     _console_em_utf8()
     if not FUNDO.exists():
@@ -200,6 +237,10 @@ def main() -> None:
     # versao que nao existe mais.
     caminho = gerar(FUNDO, build(st, 0, boas_vindas=True), SAIDA / "overlay-ajuda.jpg", escala=0.8)
     print(f"{caminho.relative_to(RAIZ)}  —  o painel de ajuda, aberto com Ctrl+Alt+A")
+
+    caminho = gerar(FUNDO, build(_com_pincel(st), MOMENTO_CRITICO), SAIDA / "overlay-pincel.jpg",
+                    escala=0.8)
+    print(f"{caminho.relative_to(RAIZ)}  —  o pincel ligado, com um circulo e uma seta")
 
     if "--sem-janela" not in sys.argv:
         figuras_da_janela()

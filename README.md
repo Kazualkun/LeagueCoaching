@@ -76,6 +76,12 @@ E você marca as suas, com a janela do jogo na frente:
 Você não precisa decorar: `Ctrl+Alt+A` mostra tudo isso dentro do jogo, junto com o significado
 de cada cor.
 
+**E dá para desenhar.** `Ctrl+Alt+D` liga o pincel — o replay pausa, e você circula a wave, marca
+a rota que deveria ter feito, aponta de onde veio o gank. `Ctrl+Alt+P` salva tudo como um PNG,
+pronto para mandar para alguém.
+
+![O pincel ligado, com um círculo e uma seta desenhados](docs/img/overlay-pincel.jpg)
+
 **As suas marcações ficam salvas.** Ao reabrir a mesma partida, elas voltam junto com as da IA — e é
 comparando as duas que se aprende mais: onde a IA marcou crítico e você não sentiu nada é ponto
 cego; onde você sentiu que errou e a medição não viu costuma ser troca de dano, combo ou

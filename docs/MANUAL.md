@@ -583,6 +583,8 @@ tocar na linha do tempo do client.
 
 #### O pincel
 
+![O pincel ligado, com um círculo e uma seta desenhados](img/overlay-pincel.jpg)
+
 `Ctrl+Alt+D` liga o pincel. Três coisas acontecem juntas, e as três são
 propositais:
 
