@@ -315,3 +315,30 @@ def test_a_espera_pela_porta_nao_mente() -> None:
 
     # Uma porta que ninguem esta escutando.
     assert esta_no_ar(1) is False
+
+
+# --------------------------------------------------------------------------
+# Perguntar sobre a partida
+# --------------------------------------------------------------------------
+
+
+def test_perguntar_sem_partida_e_404(empty_client: Any) -> None:
+    r = empty_client.post("/api/perguntar", json={"pergunta": "por que eu perdi?"})
+    assert r.status_code == 404
+
+
+def test_perguntar_valida_a_entrada_antes_de_gastar_cota(client: Any) -> None:
+    """Pergunta vazia ou gigante nao pode chegar ao provedor.
+
+    Cada chamada reserva ~2.000 tokens de um teto de 8.000 por minuto. Deixar
+    uma colagem acidental de dez mil caracteres passar queimaria a cota da
+    janela inteira para receber lixo de volta.
+    """
+    assert client.post("/api/perguntar", json={"pergunta": ""}).status_code == 422
+    longa = {"pergunta": "x" * 5_000}
+    assert client.post("/api/perguntar", json=longa).status_code == 422
+
+
+def test_perguntar_num_finding_inexistente_e_404(client: Any) -> None:
+    r = client.post("/api/perguntar", json={"pergunta": "e ai?", "finding": 999})
+    assert r.status_code == 404

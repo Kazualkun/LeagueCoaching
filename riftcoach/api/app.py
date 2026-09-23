@@ -17,6 +17,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
+from riftcoach.analysis.pergunta import LIMITE_DA_PERGUNTA, responder
 from riftcoach.analysis.report import AiTrace, analyze, analyze_with_ai, render_finding
 from riftcoach.core.errors import LiveGameRefused, RiftCoachError
 from riftcoach.core.schema import CoachingReport
@@ -55,6 +58,53 @@ class Session:
 
 
 SESSION = Session()
+
+
+class _RoteadorGuardado:
+    """Um ModelRouter reaproveitado entre perguntas.
+
+    Criar um custa 2,4s medidos — ele sonda os provedores, inclusive um Ollama
+    que pode nem estar de pe. Pagar isso a cada pergunta dobraria a espera de
+    um recurso que e interativo por natureza: quem digitou e olha para a tela
+    tolera muito menos que um passe de analise que roda sozinho.
+
+    O lock existe porque duas perguntas podem chegar juntas (a pagina e o
+    overlay, por exemplo) e sem ele as duas criariam roteadores em paralelo —
+    dois baldes de cota separados, cada um achando que tem os 8.000 tokens
+    inteiros, e as duas chamadas levando 429.
+    """
+
+    def __init__(self) -> None:
+        self._router: Any = None
+        self._lock: Any = None
+
+    async def obter(self) -> Any:
+        import asyncio
+
+        from riftcoach.llm.router import ModelRouter
+
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._router is None:
+                self._router = await ModelRouter.create()
+            return self._router
+
+    async def fechar(self) -> None:
+        if self._router is not None:
+            await self._router.aclose()
+            self._router = None
+
+
+ROTEADOR = _RoteadorGuardado()
+
+
+class Pergunta(BaseModel):
+    """Corpo de /api/perguntar. O limite e o mesmo do motor, de proposito:
+    validar aqui devolve 422 com a explicacao antes de gastar cota."""
+
+    pergunta: str = Field(min_length=1, max_length=LIMITE_DA_PERGUNTA)
+    finding: int | None = None
 
 
 def _report_payload(s: Session) -> dict[str, Any]:
@@ -220,6 +270,44 @@ def create_app() -> Any:
             return JSONResponse(status_code=409, content={"error": e.message, "hint": e.hint})
         finally:
             await client.aclose()
+
+    @app.post("/api/perguntar")
+    async def perguntar(corpo: Pergunta) -> Any:
+        """Pergunta em texto sobre a partida aberta.
+
+        `finding` opcional ancora a pergunta num momento: sem ele o modelo
+        recebe a partida inteira e nao sabe de qual dos erros o jogador fala
+        quando pergunta so "por que isso foi ruim?".
+
+        Erro de cota vira 429 com a mensagem do roteador, e nao 500: o teto
+        de tokens por minuto e uma condicao NORMAL do tier gratuito, e a
+        pagina precisa poder dizer "espere um pouco" em vez de "deu erro".
+        """
+        if not SESSION.ready or SESSION.facts is None or SESSION.report is None:
+            raise HTTPException(status_code=404, detail="nenhuma partida analisada ainda")
+
+        alvo = None
+        if corpo.finding is not None:
+            ranqueados = SESSION.report.ranked()
+            if not 0 <= corpo.finding < len(ranqueados):
+                raise HTTPException(
+                    status_code=404, detail=f"finding {corpo.finding} nao existe"
+                )
+            alvo = ranqueados[corpo.finding]
+
+        db = PatchDB()
+        db.use_patch(SESSION.facts.patch)
+        try:
+            router = await ROTEADOR.obter()
+            resposta = await responder(
+                router, SESSION.facts, corpo.pergunta, finding=alvo, resolver=db
+            )
+        except RiftCoachError as e:
+            codigo = 429 if "cota" in e.message.lower() else 400
+            return JSONResponse(
+                status_code=codigo, content={"error": e.message, "hint": e.hint or ""}
+            )
+        return {"resposta": resposta.texto, "provedor": resposta.provedor}
 
     @app.get("/")
     async def index() -> Any:

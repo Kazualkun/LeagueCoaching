@@ -157,6 +157,37 @@
   .seekmsg { font-size: 12.5px; color: var(--ink-faint); margin-left: 10px; }
   .seekmsg.err { color: var(--sev4); }
 
+  /* ---- perguntar ---- */
+  button.ask {
+    background: transparent; color: var(--ink-dim);
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: 6px 13px; font-size: 13px; font-family: inherit; cursor: pointer;
+    margin-left: 8px;
+  }
+  button.ask:hover { color: var(--accent); border-color: #2e5f74; }
+  .askbox { display: none; margin-top: 12px; }
+  .askbox.open { display: block; }
+  .askrow { display: flex; gap: 8px; }
+  .askrow input {
+    flex: 1; background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 3px;
+    padding: 8px 11px; font-size: 13.5px; font-family: inherit;
+  }
+  .askrow input:focus { outline: none; border-color: var(--accent); }
+  .askrow button {
+    background: var(--accent); color: #07131b; border: 0; border-radius: 3px;
+    padding: 8px 15px; font-size: 13px; font-family: inherit; font-weight: 600;
+    cursor: pointer;
+  }
+  .askrow button:disabled { opacity: .5; cursor: default; }
+  .answer {
+    margin-top: 10px; padding: 12px 14px; font-size: 13.5px; line-height: 1.55;
+    background: var(--surface-2); border-left: 2px solid var(--accent);
+    border-radius: 0 3px 3px 0; white-space: pre-wrap;
+  }
+  .answer.err { border-left-color: var(--sev4); color: var(--sev4); }
+  .answer .who { display: block; margin-top: 8px; font-size: 11.5px; color: var(--ink-faint); }
+
   /* ---- benchmarks ---- */
   .bench { display: grid; gap: 8px; }
   .brow {
@@ -328,7 +359,19 @@ function card(f, isTop) {
       <button class="seek" onclick="jump(${f.index})" id="b${f.index}">
         ▶ Assistir no replay · ${esc(f.seek_at)}
       </button>
+      <button class="ask" onclick="abrirPergunta(${f.index})" id="a${f.index}">
+        Perguntar sobre este momento
+      </button>
       <span class="seekmsg" id="m${f.index}"></span>
+      <div class="askbox" id="q${f.index}">
+        <div class="askrow">
+          <input type="text" id="i${f.index}" maxlength="600"
+                 placeholder="ex.: o que eu deveria ter feito aqui?"
+                 onkeydown="if(event.key==='Enter')perguntar(${f.index})">
+          <button onclick="perguntar(${f.index})" id="s${f.index}">Perguntar</button>
+        </div>
+        <div id="r${f.index}"></div>
+      </div>
     </article>`;
 }
 
@@ -359,6 +402,46 @@ async function jump(i) {
     else { msg.className = "seekmsg err"; msg.textContent = d.error || "o client recusou"; }
   } catch {
     msg.className = "seekmsg err"; msg.textContent = "servidor não respondeu";
+  }
+}
+
+function abrirPergunta(i) {
+  const box = document.getElementById("q" + i);
+  box.classList.toggle("open");
+  if (box.classList.contains("open")) document.getElementById("i" + i).focus();
+}
+
+async function perguntar(i) {
+  const campo = document.getElementById("i" + i);
+  const botao = document.getElementById("s" + i);
+  const alvo = document.getElementById("r" + i);
+  const pergunta = campo.value.trim();
+  if (!pergunta) return;
+
+  botao.disabled = true;
+  // O aviso de espera e literal, e nao decorativo: o tier gratuito do Groq
+  // limita por tokens por minuto, e uma pergunta leva alguns segundos.
+  alvo.innerHTML = `<div class="answer">pensando…</div>`;
+  try {
+    const r = await fetch("/api/perguntar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pergunta, finding: i }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      alvo.innerHTML = `<div class="answer">${esc(d.resposta)}
+        <span class="who">${esc(d.provedor)}</span></div>`;
+      campo.value = "";
+    } else {
+      const motivo = d.error || d.detail || "não consegui responder";
+      const dica = d.hint ? ` ${d.hint}` : "";
+      alvo.innerHTML = `<div class="answer err">${esc(motivo)}${esc(dica)}</div>`;
+    }
+  } catch {
+    alvo.innerHTML = `<div class="answer err">o servidor não respondeu</div>`;
+  } finally {
+    botao.disabled = false;
   }
 }
 
