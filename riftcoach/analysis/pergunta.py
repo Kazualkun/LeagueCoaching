@@ -46,24 +46,33 @@ class Resposta:
     provedor: str
 
 
-def _momento_em_foco(finding: Finding | None) -> str:
-    """O finding que originou a pergunta, quando ela veio ancorada num.
+def _momento_em_foco(finding: Finding | None, momento_ms: int | None) -> str:
+    """De onde a pergunta esta sendo feita.
 
     Vai separado do resto do contexto de proposito: sem isto o modelo recebe a
     partida inteira e nao sabe de qual dos cinco erros o jogador esta falando
     quando ele pergunta so "por que isso foi ruim?".
+
+    Duas formas porque ha duas origens. Na pagina do relatorio a pergunta nasce
+    grudada num finding e o contexto pode ser rico. No overlay ela nasce de um
+    replay parado num instante qualquer — ali so existe o relogio, e mandar o
+    relogio ja resolve, porque a timeline da partida esta toda no contexto.
     """
-    if finding is None:
-        return ""
-    return "\n".join(
-        [
-            "=== MOMENTO EM FOCO (a pergunta e sobre este) ===",
-            f"{mmss(finding.timestamp_ms)} · {finding.category} · "
-            f"gravidade {finding.severity}",
-            f"o que o sistema apontou: {finding.claim}",
-            f"correcao sugerida: {finding.fix}",
-        ]
-    )
+    if finding is not None:
+        return "\n".join(
+            [
+                "=== MOMENTO EM FOCO (a pergunta e sobre este) ===",
+                f"{mmss(finding.timestamp_ms)} · {finding.category} · gravidade {finding.severity}",
+                f"o que o sistema apontou: {finding.claim}",
+                f"correcao sugerida: {finding.fix}",
+            ]
+        )
+    if momento_ms is not None:
+        return (
+            "=== MOMENTO EM FOCO (a pergunta e sobre este) ===\n"
+            f"o jogador esta com o replay parado em {mmss(momento_ms)}"
+        )
+    return ""
 
 
 def montar_prompt(
@@ -71,13 +80,14 @@ def montar_prompt(
     pergunta: str,
     *,
     finding: Finding | None = None,
+    momento_ms: int | None = None,
     resolver: facts_render.NameResolver | None = None,
 ) -> str:
     """O prompt completo. Separado de `responder` para poder ser medido."""
     partes = [
         "=== DADOS DA PARTIDA ===",
         facts_render.render(facts, None, resolver).strip(),
-        _momento_em_foco(finding),
+        _momento_em_foco(finding, momento_ms),
         "=== PERGUNTA DO JOGADOR ===",
         pergunta.strip(),
     ]
@@ -90,6 +100,7 @@ async def responder(
     pergunta: str,
     *,
     finding: Finding | None = None,
+    momento_ms: int | None = None,
     resolver: facts_render.NameResolver | None = None,
 ) -> Resposta:
     """Responde uma pergunta sobre esta partida.
@@ -106,15 +117,14 @@ async def responder(
         )
     if len(texto) > LIMITE_DA_PERGUNTA:
         raise RiftCoachError(
-            f"pergunta longa demais ({len(texto)} caracteres, "
-            f"o limite e {LIMITE_DA_PERGUNTA})",
+            f"pergunta longa demais ({len(texto)} caracteres, o limite e {LIMITE_DA_PERGUNTA})",
             hint="Pergunte uma coisa de cada vez — respostas ficam melhores assim.",
         )
 
     tarefa = text_task("pergunta", CUSTO_ESTIMADO, interactive=True)
     saida = await router.complete(
         tarefa,
-        montar_prompt(facts, texto, finding=finding, resolver=resolver),
+        montar_prompt(facts, texto, finding=finding, momento_ms=momento_ms, resolver=resolver),
         system=load_prompt("pergunta"),
     )
     return Resposta(texto=saida.text.strip(), provedor=saida.provider)

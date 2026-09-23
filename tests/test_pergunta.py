@@ -54,6 +54,23 @@ def test_o_momento_em_foco_entra_quando_a_pergunta_vem_ancorada(garen: MatchFact
     assert f.fix in p
 
 
+def test_do_overlay_a_pergunta_leva_o_instante_do_replay(garen: MatchFacts) -> None:
+    """No overlay nao ha finding: so o relogio do replay parado. Sem ele, "por
+    que eu morri aqui?" nao diz qual das mortes."""
+    p = montar_prompt(garen, "por que eu morri aqui?", momento_ms=14 * 60_000 + 22_000)
+    assert "MOMENTO EM FOCO" in p
+    assert "14:22" in p
+
+
+def test_o_finding_prevalece_sobre_o_instante(garen: MatchFacts) -> None:
+    """Com os dois, o finding diz mais: ja traz o instante E o que foi apontado."""
+    relatorio, _ = analyze(garen)
+    f = relatorio.ranked()[0]
+    p = montar_prompt(garen, "por que?", finding=f, momento_ms=1)
+    assert f.claim in p
+    assert "replay parado" not in p
+
+
 def test_o_prompt_cabe_na_cota(garen: MatchFacts) -> None:
     """A conta que justifica mandar a partida INTEIRA em vez de uma fatia.
 

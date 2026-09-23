@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,11 +34,13 @@ from riftcoach.overlay.atalhos import (
     VK_CONTROL,
     VK_MENU,
     VK_OCULTAR,
+    VK_PERGUNTAR,
     VK_PINCEL,
     VK_PRINT,
     VK_RETOMAR,
     VK_SEGUINTE,
 )
+from riftcoach.overlay.caixa import CaixaDePergunta
 from riftcoach.overlay.desenho import Prancheta, apagar_ultimo, limpar_instante
 from riftcoach.overlay.geometry import Rect
 from riftcoach.overlay.render import OverlayWindow
@@ -127,8 +129,15 @@ async def executar(
     fps: float = FPS,
     atalhos: bool = True,
     log: Callable[[str], None] = print,
+    perguntar: Callable[[str, int], Awaitable[str]] | None = None,
 ) -> OverlayRun:
-    """Abre o overlay e fica nele ate o replay ou o usuario terminarem."""
+    """Abre o overlay e fica nele ate o replay ou o usuario terminarem.
+
+    `perguntar(texto, instante_ms) -> resposta` chega de fora de proposito:
+    assim este modulo continua sem saber o que e roteador, cota ou prompt, e
+    o teste do laco continua rodando sem rede. `None` desliga o recurso — e o
+    que acontece quando nao ha provedor de IA configurado.
+    """
     res = OverlayRun()
     if not win.disponivel():
         res.motivo = "o overlay so funciona no Windows"
@@ -136,6 +145,12 @@ async def executar(
 
     cliente, guard = await open_guard()
     overlay: OverlayWindow | None = None
+    # A pergunta em curso. Fica fora do laco porque a resposta chega por uma
+    # tarefa de fundo: bloquear o laco esperando a IA congelaria o overlay por
+    # segundos — sem repintar, sem ouvir tecla — bem no meio de um replay
+    # rodando. Declarada antes do `try` porque o `finally` a cancela, e a
+    # calibracao pode falhar antes de o laco existir.
+    tarefa_da_pergunta: asyncio.Task[None] | None = None
     try:
         ctrl = ReplayController(guard)
         cal = await ctrl.calibrate()
@@ -175,6 +190,10 @@ async def executar(
         # mesmo, mas se alguem despausar no meio do desenho a anotacao tem de
         # continuar pertencendo ao momento que estava sendo analisado.
         instante_do_pincel = 0
+        # Mesmo raciocinio para a pergunta: ela e SOBRE o momento em que foi
+        # aberta. Se o replay andar enquanto a pessoa digita, a resposta ainda
+        # tem de falar do instante que ela estava olhando.
+        instante_da_pergunta = 0
 
         def ao_comecar(x: float, y: float) -> None:
             prancheta.comecar(x, y)
@@ -189,6 +208,46 @@ async def executar(
                 return
             rs.strokes.append(traco)
             save_session(rs)
+
+        caixa = CaixaDePergunta()
+
+        async def _buscar_resposta(texto: str, instante_ms: int) -> None:
+            assert perguntar is not None
+            try:
+                st.resposta = await perguntar(texto, instante_ms)
+            except Exception as e:
+                # Erro de cota ou de rede nao pode derrubar o overlay: quem
+                # esta revisando perde a sessao inteira por causa de uma
+                # pergunta. Vira texto na propria caixa.
+                st.resposta = f"nao consegui responder: {e}"
+            finally:
+                st.pensando = False
+
+        def fechar_pergunta() -> None:
+            """Fecha os DOIS lados do modo: o estado que desenha e a janela
+            que captura o teclado. Fechar so um deixaria o overlay comendo as
+            teclas com a caixa ja invisivel — e sem caixa na tela, ninguem
+            adivinha que precisa apertar Escape de novo."""
+            st.modo_pergunta = False
+            # A resposta que chegasse depois de fechar apareceria na PROXIMA
+            # caixa aberta, embaixo de outra pergunta, sobre outro instante.
+            if tarefa_da_pergunta is not None and not tarefa_da_pergunta.done():
+                tarefa_da_pergunta.cancel()
+            if overlay is not None:
+                overlay.modo_digitacao(False)
+
+        def ao_digitar(char: str, keysym: str) -> None:
+            nonlocal tarefa_da_pergunta
+            acao = caixa.teclar(char, keysym)
+            if acao == "fechar":
+                fechar_pergunta()
+            elif acao == "enviar" and perguntar is not None and not st.pensando:
+                st.pensando = True
+                st.resposta = ""
+                tarefa_da_pergunta = asyncio.create_task(
+                    _buscar_resposta(caixa.limpar(), instante_da_pergunta)
+                )
+            st.texto_da_pergunta = caixa.texto
 
         def ao_teclar(tecla: str) -> None:
             if rs is None:
@@ -265,7 +324,7 @@ async def executar(
 
             # O painel aparece sozinho no comeco e sob demanda depois. No modo
             # desenho ele sai da frente: a tela toda e a lousa.
-            painel = not st.modo_desenho and (
+            painel = not (st.modo_desenho or st.modo_pergunta) and (
                 ajuda or (time.monotonic() - aberto_em) < BOAS_VINDAS_S
             )
             overlay.desenhar(build(st, agora_ms, boas_vindas=painel))
@@ -275,6 +334,12 @@ async def executar(
             if atalhos:
                 for vk in teclas.novas([a.vk for a in TODOS]):
                     atalho = POR_CODIGO[vk]
+                    if st.modo_pergunta and vk != VK_PERGUNTAR:
+                        # Digitando, so o atalho que fecha a caixa vale. No
+                        # Windows, AltGr E Ctrl+Alt: no teclado ABNT2, AltGr+Q
+                        # da "/" e AltGr+E da "°" — sem este filtro, escrever a
+                        # pergunta criaria marcacoes ou pularia o replay.
+                        continue
                     if vk == VK_OCULTAR:
                         oculto = True
                     elif vk == VK_AJUDA:
@@ -303,6 +368,33 @@ async def executar(
                             prancheta.descartar()
                             overlay.modo_desenho(False)
                             log("pincel desligado")
+                    elif vk == VK_PERGUNTAR:
+                        if perguntar is None:
+                            log("perguntar exige um provedor de IA configurado")
+                            continue
+                        st.modo_pergunta = not st.modo_pergunta
+                        if st.modo_pergunta:
+                            if st.modo_desenho:
+                                # Os dois modos disputam a mesma janela: cada
+                                # um liga o clique e prende o teclado do seu
+                                # jeito, e desligar um soltaria o do outro.
+                                st.modo_desenho = False
+                                prancheta.descartar()
+                                overlay.modo_desenho(False)
+                            instante_da_pergunta = agora_ms
+                            caixa.limpar()
+                            st.texto_da_pergunta = ""
+                            st.resposta = ""
+                            # PAUSA, pelo mesmo motivo do pincel: ninguem
+                            # digita uma pergunta enquanto o replay corre e o
+                            # momento que motivou a pergunta passa.
+                            with contextlib.suppress(LiveGameRefused):
+                                await ctrl.pause()
+                            overlay.modo_digitacao(True, ao_digitar=ao_digitar)
+                            log(f"pergunta aberta em {_mmss(instante_da_pergunta)}")
+                        else:
+                            fechar_pergunta()
+                            log("pergunta fechada")
                     elif vk == VK_PRINT:
                         destino = _salvar_print(rect, st.match_id, agora_ms)
                         log(
@@ -343,6 +435,12 @@ async def executar(
     except KeyboardInterrupt:
         res.motivo = "encerrado por voce"
     finally:
+        # Quem chamou fecha o roteador logo depois de `executar` voltar; uma
+        # pergunta ainda no ar ficaria falando com um cliente ja fechado.
+        if tarefa_da_pergunta is not None and not tarefa_da_pergunta.done():
+            tarefa_da_pergunta.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await tarefa_da_pergunta
         if overlay is not None:
             overlay.fechar()
         with contextlib.suppress(Exception):

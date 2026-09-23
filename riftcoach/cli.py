@@ -945,6 +945,7 @@ def overlay(
         Ctrl+Alt+R   voltar para onde voce parou
         Ctrl+Alt+D   pincel: desenhar por cima do replay
         Ctrl+Alt+P   salvar um print do momento, com os desenhos
+        Ctrl+Alt+I   perguntar a IA sobre este momento
         Ctrl+Alt+A   abrir e fechar a ajuda NA TELA, a qualquer momento
         Ctrl+Alt+H   esconder o overlay
 
@@ -953,6 +954,8 @@ def overlay(
     """
     from riftcoach.overlay.prepare import preparar
     from riftcoach.overlay.run import executar
+    from riftcoach.replay.gamecfg import replay_patch_mismatch
+    from riftcoach.replay.guard import wait_for_replay
 
     async def main() -> None:
         console.print("[dim]Analisando a partida...[/]")
@@ -970,12 +973,52 @@ def overlay(
             f"[bold]{f.focus.champion}[/] {f.focus.kills}/{f.focus.deaths}/"
             f"{f.focus.assists} · [bold]{len(pre.state.marks)}[/] marcacoes"
         )
+        if (problema := replay_patch_mismatch(f.patch)) is not None:
+            # Aviso, e nao erro: se a versao instalada foi lida errado (duas
+            # instalacoes, um PBE), recusar trancaria o overlay para sempre.
+            # Quem ve o aviso e fica esperando sabe por que, e sai com Ctrl+C.
+            console.print(f"[yellow]Atencao:[/] {problema}")
         console.print(
             "[dim]Abra o replay no client do League. Procurando...[/] [dim](Ctrl+C para sair)[/]"
         )
-        res = await executar(
-            pre.state, pre.session, atalhos=atalhos, log=lambda m: console.print(f"  [dim]{m}[/]")
-        )
+        await wait_for_replay()
+        console.print("  [dim]replay encontrado[/]")
+
+        # O roteador so nasce na PRIMEIRA pergunta, e nao aqui: criar um custa
+        # 2,4s medidos, e quem abre o overlay so para assistir as marcacoes
+        # nunca pergunta nada — pagaria a espera por um recurso que nao vai
+        # usar, bem no momento em que esta tentando ver o replay.
+        estado: dict[str, Any] = {"router": None, "db": None}
+
+        async def perguntar(texto: str, instante_ms: int) -> str:
+            from riftcoach.analysis.pergunta import responder
+            from riftcoach.llm.router import ModelRouter
+
+            if estado["router"] is None:
+                estado["router"] = await ModelRouter.create()
+                db = PatchDB()
+                db.use_patch(pre.facts.patch)
+                estado["db"] = db
+            r = await responder(
+                estado["router"],
+                pre.facts,
+                texto,
+                momento_ms=instante_ms,
+                resolver=estado["db"],
+            )
+            return r.texto
+
+        try:
+            res = await executar(
+                pre.state,
+                pre.session,
+                atalhos=atalhos,
+                log=lambda m: console.print(f"  [dim]{m}[/]"),
+                perguntar=perguntar if ai else None,
+            )
+        finally:
+            if estado["router"] is not None:
+                await estado["router"].aclose()
         if res.marcas_do_usuario:
             console.print(f"[green]{res.marcas_do_usuario}[/] marcacoes suas salvas.")
         if res.motivo:

@@ -480,11 +480,14 @@ Sem replay aberto, o botão responde explicando o que falta. Não trava nem dá 
 Esta é a forma de revisar mais próxima de ter um coach do lado. O RiftCoach desenha por cima da
 janela do jogo, sincronizado com o relógio do próprio replay.
 
-**Antes de abrir, dois pré-requisitos que ninguém adivinha:**
+**Antes de abrir, três pré-requisitos que ninguém adivinha:**
 
 1. A **Replay API precisa estar ligada** (seção 2, passo 5) — vem desligada de fábrica.
 2. O jogo precisa estar em **"Sem bordas"**. Em tela cheia exclusiva o Windows não permite que nada
    apareça por cima; não é limitação do RiftCoach. Troque em Configurações → Vídeo → Modo de janela.
+3. A partida precisa ser **do patch atual**. Depois de uma atualização, o client da Riot não abre
+   mais os replays do patch anterior — o botão de assistir some e não há contorno. O RiftCoach avisa
+   quando a partida escolhida é de outro patch.
 
 **Como abrir**, pela janela: clique em **Abrir overlay** na tela final. Pelo terminal:
 
@@ -492,7 +495,8 @@ janela do jogo, sincronizado com o relógio do próprio replay.
 uv run riftcoach overlay "SeuNome#TAG"
 ```
 
-Depois abra o replay no client, dê play — e **clique na janela do jogo**.
+Depois abra o replay no client, dê play — e **clique na janela do jogo**. O comando espera o replay
+abrir; não precisa correr.
 
 > **Esse último passo não é detalhe.** O overlay só desenha por cima do League, e só enquanto o
 > League é a janela ativa. Enquanto você estiver olhando para o terminal ou para a janela do
@@ -573,6 +577,7 @@ Com a **janela do jogo na frente**:
 | `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
 | `Ctrl+Alt+D` | **pincel** — desenhar por cima do replay |
 | `Ctrl+Alt+P` | salvar um print do momento, com os desenhos |
+| `Ctrl+Alt+I` | **perguntar à IA** sobre este momento |
 | `Ctrl+Alt+A` | abrir e fechar a ajuda na tela |
 | `Ctrl+Alt+H` | esconder o overlay |
 
@@ -618,6 +623,17 @@ replay em 2560x1440, o traço continua apontando para o que apontava.
 `Ctrl+Alt+P` salva um PNG da janela do jogo com tudo por cima — a jogada, o cartão do erro e o seu
 desenho na mesma imagem, pronta para mandar para alguém. Vai para `~/.riftcoach/prints/`.
 
+#### Perguntar à IA
+
+`Ctrl+Alt+I` abre uma caixa no rodapé. O replay pausa, como no pincel, e a pergunta fica amarrada
+ao minuto em que você a abriu: "por que eu morri aqui?" chega à IA junto com esse instante e a
+partida inteira. `Enter` pergunta, `Esc` fecha. A resposta aparece na própria caixa em alguns
+segundos, e enquanto ela está aberta os outros atalhos ficam desligados, para que escrever a
+pergunta não crie marcações nem pule o replay.
+
+Precisa de um provedor de IA configurado (seção 4); sem ele o atalho só avisa no terminal. Cada
+pergunta gasta cerca de 2.000 tokens da cota do provedor.
+
 #### As marcações ficam salvas
 
 Ao reabrir a mesma partida, as suas anotações voltam junto com as da IA, e o overlay avisa em que
@@ -643,7 +659,6 @@ uv run riftcoach marcacoes BR1_3285629030 --riot-id "SeuNome#TAG" --formato json
 |---|---|
 | Escrever um texto livre na sua marcação | ☐ hoje ela grava só o tipo e o minuto |
 | Clicar numa marcação da faixa para pular | ☐ o overlay atravessa o clique de propósito, para nunca atrapalhar o jogo |
-| Perguntar à IA sobre um momento específico | ☐ depende da camada de IA |
 | Desenhar setas e círculos no espaço 3D do jogo | ☐ exige projetar câmera; hoje só minimapa, que é 2D e exato |
 
 ---
@@ -684,6 +699,7 @@ em cache. O relatório sempre usa o patch em que a partida foi jogada, nunca o a
 | `Não encontrado` (404) | Riot ID errado | Confira `Nome#TAG` no client e a região no `.env` |
 | `mapId 30 não é Summoner's Rift` | Partida de Arena | Use `-q 420` para filtrar ranked solo |
 | `League client não está rodando` | Sem replay aberto | Abra o replay antes |
+| `esta partida é do patch X e o seu League já está no Y` | O client não abre replay de outro patch | Escolha uma partida jogada depois da atualização (`--match` ou `--last`) |
 | `a Replay API do League está desligada` | Falta `EnableReplayApi=1` | `uv run riftcoach enable-replay-api` |
 | `certificado do client não confere` | Certificado ainda não fixado | `uv run riftcoach pin-cert` |
 | `os relógios ainda não assentaram` | Seek recente; o jogo ainda simula | Espere ~5s e tente de novo |

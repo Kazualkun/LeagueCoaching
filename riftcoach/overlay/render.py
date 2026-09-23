@@ -274,6 +274,35 @@ class OverlayWindow:
         if ao_teclar is not None:
             self.root.bind("<Key>", lambda e: ao_teclar(e.keysym))
 
+    def modo_digitacao(
+        self,
+        ligado: bool,
+        *,
+        ao_digitar: Callable[[str, str], None] | None = None,
+    ) -> None:
+        """Liga a digitacao: a janela recebe o teclado e monta um texto.
+
+        Entrega `char` E `keysym` ao chamador, porque os dois respondem
+        perguntas diferentes: `char` e o caractere de verdade, ja com shift e
+        acento aplicados — digitar "ç" da o "ç"; `keysym` e o nome da tecla, e
+        e o unico jeito de distinguir Enter de BackSpace de Escape, que nao
+        produzem caractere nenhum.
+        """
+        if not self._hwnd:
+            return
+        win.set_click_through(self._hwnd, not ligado)
+        if not ligado:
+            self.root.unbind("<Key>")
+            return
+
+        # Sem foco de verdade, nenhuma tecla chega — a janela e
+        # WS_EX_NOACTIVATE justamente para nao roubar foco no uso normal.
+        self.root.attributes("-topmost", True)
+        with contextlib.suppress(tk.TclError):
+            self.root.focus_force()
+        if ao_digitar is not None:
+            self.root.bind("<Key>", lambda e: ao_digitar(e.char or "", e.keysym))
+
     def bombear(self) -> None:
         """Deixa o tkinter respirar sem entregar o controle do laco."""
         self.root.update()

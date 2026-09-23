@@ -167,6 +167,14 @@ class OverlayState:
     cor_do_pincel: str = ""
     espessura_do_pincel: float = 0.0
     modo_desenho: bool = False
+    # Perguntar a IA. `pensando` existe separado de `resposta` porque a espera
+    # e longa o bastante (alguns segundos) para que uma tela sem sinal nenhum
+    # pareca travada — e no modo pergunta o clique nao chega ao jogo, entao
+    # parecer travado e especialmente ruim.
+    modo_pergunta: bool = False
+    texto_da_pergunta: str = ""
+    resposta: str = ""
+    pensando: bool = False
 
     @property
     def u(self) -> float:
@@ -715,6 +723,98 @@ def _barra_do_pincel(st: OverlayState) -> list[Primitive]:
     return out
 
 
+# Teto de linhas da resposta na tela. A IA e instruida a responder em dois a
+# quatro paragrafos, o que costuma caber; o teto existe para o caso em que ela
+# nao obedece — um painel que cresce sem limite cobriria o jogo inteiro, que e
+# exatamente o que a pessoa esta tentando assistir.
+MAX_LINHAS_DA_RESPOSTA = 9
+
+
+def _painel_da_pergunta(st: OverlayState) -> list[Primitive]:
+    """A caixa de perguntar a IA, no rodape.
+
+    Mesma regra do pincel: no modo pergunta o clique e o teclado NAO chegam
+    mais ao jogo, entao a faixa precisa ser inconfundivel — quem nao perceber
+    que entrou nele vai achar que o League travou.
+    """
+    u = st.u
+    fonte = max(9.0, 0.015 * u)
+    margem = 0.02 * st.width
+    # 0,636 saiu de medicao, nao de chute: e a largura media do caractere em
+    # pixels por ponto de fonte, no corpo (que desenha a 0,92 da fonte base).
+    # Estava 0,52 aqui, e a primeira figura gerada mostrou a resposta saindo
+    # pela direita da tela, cortada no meio da palavra.
+    larg_ch = max(30, int((st.width - 2 * margem) / (fonte * 0.92 * 0.64)))
+
+    if st.pensando:
+        corpo = ["pensando..."]
+    elif st.resposta:
+        corpo = _quebrar(st.resposta, larg_ch)[:MAX_LINHAS_DA_RESPOSTA]
+    else:
+        corpo = []
+
+    alt_corpo = len(corpo) * fonte * 1.4 + (fonte * 0.8 if corpo else 0.0)
+    # 4,6 e nao 4,0: com 4,0 a ultima linha da resposta encostava na borda de
+    # baixo da tela na figura gerada, a poucos pixels de ser cortada.
+    alt = fonte * 4.6 + alt_corpo
+    y = st.height - alt
+    out: list[Primitive] = [
+        Box(Rect(0.0, y, float(st.width), alt), fill=COR_FUNDO, outline=COR_PERGUNTA, width=2.0)
+    ]
+
+    x = margem
+    linha = y + fonte * 1.3
+    out.append(
+        Label(x, linha, "PERGUNTAR À IA", color=COR_PERGUNTA, size=fonte, bold=True, anchor="w")
+    )
+    # O cursor piscando sairia caro (exige relogio no desenho, que e puro);
+    # uma barra fixa diz a mesma coisa: "o texto entra aqui".
+    digitado = st.texto_da_pergunta or "digite a sua pergunta"
+    cor_digitado = COR_TEXTO if st.texto_da_pergunta else COR_FRACO
+    # A linha digitada tem conta propria: comeca depois do titulo e usa a
+    # fonte cheia, nao a do corpo. Com a largura do corpo ela saia pela
+    # direita a partir de uns 160 caracteres — e o limite e 600.
+    recuo = fonte * 12.6
+    larg_digitado = max(10, int((st.width - 2 * margem - recuo) / (fonte * 0.64)) - 1)
+    out.append(
+        Label(
+            x + recuo,
+            linha,
+            f"{digitado[-larg_digitado:]}▌" if st.texto_da_pergunta else digitado,
+            color=cor_digitado,
+            size=fonte,
+            anchor="w",
+        )
+    )
+
+    linha += fonte * 1.5
+    out.append(
+        Label(
+            x,
+            linha,
+            "Enter pergunta · Esc fecha · Backspace apaga",
+            color=COR_FRACO,
+            size=fonte * 0.78,
+            anchor="w",
+        )
+    )
+
+    linha += fonte * 1.2
+    for texto in corpo:
+        linha += fonte * 1.4
+        out.append(
+            Label(
+                x,
+                linha,
+                texto,
+                color=COR_FRACO if st.pensando else COR_TEXTO,
+                size=fonte * 0.92,
+                anchor="w",
+            )
+        )
+    return out
+
+
 def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
     """A cena inteira para este instante.
 
@@ -731,6 +831,8 @@ def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
     sc.add(*_desenhos(st))
     if st.modo_desenho:
         sc.add(*_barra_do_pincel(st))
+    if st.modo_pergunta:
+        sc.add(*_painel_da_pergunta(st))
     if boas_vindas:
         # Ele ocupa o lugar do cartao de erro, e por isso suprime os dois. Nos
         # primeiros segundos "o que e isto" importa mais que qualquer erro —

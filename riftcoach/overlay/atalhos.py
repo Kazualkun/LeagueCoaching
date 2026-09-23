@@ -48,6 +48,7 @@ NAVEGAR = (
 FERRAMENTAS = (
     Atalho(0x44, "Ctrl+Alt+D", "pincel: desenhar por cima do replay"),
     Atalho(0x50, "Ctrl+Alt+P", "salvar um print do momento, com os desenhos"),
+    Atalho(0x49, "Ctrl+Alt+I", "perguntar à IA sobre este momento"),
 )
 
 JANELA = (
@@ -62,6 +63,7 @@ VK_SEGUINTE = NAVEGAR[0].vk
 VK_RETOMAR = NAVEGAR[1].vk
 VK_PINCEL = FERRAMENTAS[0].vk
 VK_PRINT = FERRAMENTAS[1].vk
+VK_PERGUNTAR = FERRAMENTAS[2].vk
 VK_AJUDA = JANELA[0].vk
 VK_OCULTAR = JANELA[1].vk
 
