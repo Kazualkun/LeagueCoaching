@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from riftcoach.config import Settings
+from riftcoach.config import PLATFORM_TO_ROUTING, Settings, normalize_platform
 from riftcoach.config import settings as default_settings
 from riftcoach.core.errors import (
     RiotApiError,
@@ -71,7 +71,11 @@ class RiotClient:
                 status=401,
                 hint="Rode: riftcoach auth  (ou defina RIOT_API_KEY no ambiente)",
             )
-        self.routing = self.settings.routing
+        # Normalizado aqui, uma vez so, para que 'br' (em vez de 'br1') nunca
+        # chegue a virar host de URL: rejeitado na entrada, nao 400/403 minutos
+        # depois num endpoint por-puuid, longe de onde a plataforma foi digitada.
+        self.platform = normalize_platform(self.settings.riot_platform)
+        self.routing = PLATFORM_TO_ROUTING.get(self.platform, "americas")
         self._cache = cache
         self._owns_cache = cache is None
         self._limiter = RiotLimiter()
@@ -196,16 +200,23 @@ class RiotClient:
         Usado por LEAGUE-V4, STATUS-V4, CHAMPION-MASTERY-V4. Trocar um host pelo
         outro devolve 404 de um jeito confuso, entao os dois sao explicitos.
         """
-        return f"https://{self.settings.riot_platform}.api.riotgames.com{path}"
+        return f"https://{self.platform}.api.riotgames.com{path}"
 
     # ------------------------------------------------------------------
     # Endpoints
     # ------------------------------------------------------------------
 
+    # "Estavel", nao imutavel: nome/tag podem ser liberados e reclamados por
+    # outra conta, e a Riot ja migrou puuids de contas antigas no passado —
+    # um puuid que parou de decriptar do lado da Riot e o sintoma. 30 dias
+    # limita ha quanto tempo uma entrada envenenada pode ficar respondendo
+    # errado antes de se corrigir sozinha, sem abrir mao do cache no dia a dia.
+    ACCOUNT_CACHE_MAX_AGE_S = 30 * 24 * 3600.0
+
     async def account_by_riot_id(self, game_name: str, tag_line: str) -> dict[str, Any]:
-        """account-v1. Cacheado: o mapeamento Riot ID -> puuid e estavel."""
+        """account-v1. Cacheado com prazo — ver ACCOUNT_CACHE_MAX_AGE_S."""
         key = ck.key_account(self.routing, game_name, tag_line)
-        if (hit := await self.cache.get(key)) is not None:
+        if (hit := await self.cache.get(key, max_age_s=self.ACCOUNT_CACHE_MAX_AGE_S)) is not None:
             return dict(hit)
         data = await self._get(
             self._url(f"/riot/account/v1/accounts/by-riot-id/{game_name}/{tag_line}")

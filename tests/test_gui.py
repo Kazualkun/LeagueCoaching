@@ -134,6 +134,44 @@ def test_a_tela_final_oferece_os_dois_caminhos(app: App) -> None:
     assert any("7 momentos marcados" in t for t in textos)
 
 
+def test_relatorio_avisa_quando_a_porta_ja_esta_em_uso(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduz o bug real: duas janelas do RiftCoach abertas ao mesmo tempo.
+
+    A segunda nao consegue subir o servidor (porta ja ocupada pela primeira),
+    uvicorn desiste com sys.exit(), e sem tratamento esse erro morria
+    silencioso — pythonw nao tem console para mostra-lo, e o botao so
+    parecia nao fazer nada. Agora vira aviso na barra de status, e o botao
+    pode ser tentado de novo.
+    """
+    from types import SimpleNamespace
+
+    app._preparado = SimpleNamespace(facts=None, report=None, benchmarks=None)
+    app._servidor_no_ar = False
+    monkeypatch.setattr("riftcoach.api.app.adopt", lambda *a, **k: None)
+    monkeypatch.setattr("riftcoach.api.app.esta_no_ar", lambda *a, **k: False)
+
+    def servidor_falso(*, port: int, open_browser: bool) -> None:
+        raise SystemExit(3)
+
+    monkeypatch.setattr("riftcoach.api.app.serve", servidor_falso)
+
+    app._abrir_web()
+
+    import time
+
+    limite = time.time() + 2
+    while time.time() < limite:
+        app._bombear()
+        if "outra janela" in app.status.cget("text"):
+            break
+        time.sleep(0.02)
+
+    assert "outra janela" in app.status.cget("text")
+    assert app._servidor_no_ar is False
+
+
 def test_sem_replay_aberto_a_janela_ensina_em_vez_de_so_falhar(app: App) -> None:
     """O erro mais comum do overlay e nao ter replay rodando. Dizer so 'nao
     encontrei' deixaria a pessoa sem o proximo passo — e 'Sem bordas' e uma

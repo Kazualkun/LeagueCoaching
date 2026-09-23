@@ -25,6 +25,7 @@ from rich.panel import Panel
 
 from riftcoach.config import (
     load_prefs,
+    normalize_platform,
     save_pref,
     settings,
     write_key_to_keyring,
@@ -162,11 +163,14 @@ def passo_riot_id() -> str | None:
         )
         return None
 
-    plataforma = (
-        typer.prompt("  Sua regiao", default=prefs.get("platform", settings.riot_platform))
-        .strip()
-        .lower()
-    )
+    plataforma_digitada = typer.prompt(
+        "  Sua regiao", default=prefs.get("platform", settings.riot_platform)
+    ).strip()
+    try:
+        plataforma = normalize_platform(plataforma_digitada)
+    except RiftCoachError as e:
+        _erro(e.message, e.hint or "")
+        return None
 
     save_pref("riot_id", riot_id)
     save_pref("platform", plataforma)

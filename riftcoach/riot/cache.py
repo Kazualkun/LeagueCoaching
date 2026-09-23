@@ -81,17 +81,30 @@ class RiotCache:
             raise RuntimeError("RiotCache usado fora do 'async with'")
         return self._db
 
-    async def get(self, key: str) -> Any | None:
+    async def get(self, key: str, *, max_age_s: float | None = None) -> Any | None:
+        """`max_age_s=None` (padrao) e o cache permanente de sempre — o
+        correto para match e timeline, que nunca mudam. Um recurso que so e
+        ESTAVEL NA PRATICA, nao imutavel de verdade (ex.: o mapeamento Riot ID
+        -> puuid, que uma migracao de conta da Riot pode romper), passa um
+        prazo para que uma entrada envenenada se autocorrija sozinha em vez de
+        empacar para sempre.
+        """
         async with self.db.execute(
-            "SELECT payload, schema_v FROM raw WHERE key = ?", (key,)
+            "SELECT payload, schema_v, fetched_at FROM raw WHERE key = ?", (key,)
         ) as cur:
             row = await cur.fetchone()
         if row is None:
             return None
-        payload, schema_v = row
+        payload, schema_v, fetched_at = row
         if schema_v != SCHEMA_VERSION:
             return None
+        if max_age_s is not None and time.time() - fetched_at > max_age_s:
+            return None
         return json.loads(_DECOMPRESSOR.decompress(payload))
+
+    async def delete(self, key: str) -> None:
+        await self.db.execute("DELETE FROM raw WHERE key = ?", (key,))
+        await self.db.commit()
 
     async def put(self, key: str, value: Any) -> None:
         raw = json.dumps(value, separators=(",", ":")).encode("utf-8")

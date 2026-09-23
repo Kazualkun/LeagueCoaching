@@ -8,7 +8,7 @@ import pytest
 import respx
 
 from riftcoach.config import Settings
-from riftcoach.core.errors import RiotKeyExpired, RiotKeyInvalid, RiotNotFound
+from riftcoach.core.errors import RiftCoachError, RiotKeyExpired, RiotKeyInvalid, RiotNotFound
 from riftcoach.riot import cache as ck
 from riftcoach.riot.cache import RiotCache
 from riftcoach.riot.client import RiotClient
@@ -77,6 +77,30 @@ async def test_cache_invalidates_on_schema_bump(
     await cache.put("match:americas:BR1_1", {"a": 1})
     monkeypatch.setattr("riftcoach.riot.cache.SCHEMA_VERSION", 99)
     # Entrada de versao antiga e tratada como ausente, nunca devolvida errada.
+    assert await cache.get("match:americas:BR1_1") is None
+
+
+async def test_cache_get_respects_max_age(
+    cache: RiotCache, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uma entrada mais velha que max_age_s conta como ausente — e o que deixa
+    uma entrada envenenada (puuid que a Riot parou de aceitar) se autocorrigir
+    em vez de responder errado para sempre."""
+    monkeypatch.setattr("riftcoach.riot.cache.time.time", lambda: 1_000.0)
+    await cache.put("account:americas:faker#kr1", {"puuid": "velho"})
+
+    monkeypatch.setattr("riftcoach.riot.cache.time.time", lambda: 1_000.0 + 10)
+    assert await cache.get("account:americas:faker#kr1", max_age_s=100) == {"puuid": "velho"}
+
+    monkeypatch.setattr("riftcoach.riot.cache.time.time", lambda: 1_000.0 + 200)
+    assert await cache.get("account:americas:faker#kr1", max_age_s=100) is None
+    # Sem prazo (o padrao), a mesma entrada continua valendo — cache de sempre.
+    assert await cache.get("account:americas:faker#kr1") == {"puuid": "velho"}
+
+
+async def test_cache_delete(cache: RiotCache) -> None:
+    await cache.put("match:americas:BR1_1", {"a": 1})
+    await cache.delete("match:americas:BR1_1")
     assert await cache.get("match:americas:BR1_1") is None
 
 
@@ -153,6 +177,34 @@ async def test_404_raises_not_found(cfg: Settings, cache: RiotCache) -> None:
     async with RiotClient(config=cfg, cache=cache) as rc:
         with pytest.raises(RiotNotFound):
             await rc.account_by_riot_id("NaoExiste", "0000")
+
+
+@respx.mock
+async def test_account_cache_self_heals_after_ttl(
+    cfg: Settings, cache: RiotCache, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O bug real que motivou o prazo: um puuid cacheado que a Riot passa a
+    recusar (conta migrada, tag liberada e reclamada por outra conta) nao
+    pode responder errado para sempre so porque 'o mapeamento e estavel' era
+    verdade quando foi cacheado. Passado o prazo, busca de novo."""
+    key = ck.key_account(ROUTING, "fulano", "br1")
+    monkeypatch.setattr("riftcoach.riot.cache.time.time", lambda: 1_000.0)
+    await cache.put(key, {"puuid": "puuid-velho-que-a-riot-ja-nao-aceita"})
+
+    route = respx.get(f"{BASE}/riot/account/v1/accounts/by-riot-id/fulano/br1").mock(
+        return_value=httpx.Response(
+            200, json={"puuid": "puuid-novo", "gameName": "Fulano", "tagLine": "BR1"}
+        )
+    )
+    monkeypatch.setattr(
+        "riftcoach.riot.cache.time.time",
+        lambda: 1_000.0 + RiotClient.ACCOUNT_CACHE_MAX_AGE_S + 1,
+    )
+    async with RiotClient(config=cfg, cache=cache) as rc:
+        acct = await rc.account_by_riot_id("fulano", "br1")
+
+    assert acct["puuid"] == "puuid-novo"
+    assert route.called
 
 
 @respx.mock
@@ -287,3 +339,14 @@ def test_platform_and_regional_hosts_are_distinct(cfg: Settings) -> None:
     rc = RiotClient(config=cfg)
     assert rc._url("/x") == "https://americas.api.riotgames.com/x"
     assert rc._platform_url("/x") == "https://br1.api.riotgames.com/x"
+
+
+def test_client_rejects_unknown_platform_at_construction() -> None:
+    """'br' (faltando o '1') nao pode virar host de URL silenciosamente —
+    isso um dia gerou 'br.api.riotgames.com', que a Riot as vezes responde e
+    as vezes nao, dependendo do endpoint. Falhar aqui, na construcao, poupa
+    minutos de 400/403 confusos num endpoint por-puuid, longe de onde a
+    plataforma foi digitada errada."""
+    cfg = Settings(riot_api_key="x", riot_platform="br")
+    with pytest.raises(RiftCoachError):
+        RiotClient(config=cfg)

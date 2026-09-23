@@ -40,6 +40,28 @@ PLATFORM_TO_ROUTING: dict[str, str] = {
 }
 
 
+def normalize_platform(platform: str) -> str:
+    """Confere e normaliza um codigo de plataforma (ex.: 'br1', nao 'br').
+
+    Unica porta de entrada para `riot_platform`: sem isto, um erro de digitacao
+    como 'br' em vez de 'br1' nao falha na hora — `routing` cai de volta para
+    'americas' (que por acaso e certo pro Brasil) mas `_platform_url` monta
+    'br.api.riotgames.com', um host que a Riot responde com 401/403/400
+    dependendo do endpoint. O erro aparece minutos depois, longe da causa, e
+    parece um problema na chave ou no puuid quando na verdade e a regiao.
+    """
+    p = platform.strip().lower()
+    if p not in PLATFORM_TO_ROUTING:
+        from riftcoach.core.errors import RiftCoachError
+
+        opcoes = ", ".join(sorted(PLATFORM_TO_ROUTING))
+        raise RiftCoachError(
+            f"Plataforma desconhecida: {platform!r}",
+            hint=f"Use uma destas: {opcoes}",
+        )
+    return p
+
+
 def data_dir() -> Path:
     """Diretorio de dados do usuario. Respeita RIFTCOACH_HOME se definido."""
     override = os.environ.get("RIFTCOACH_HOME")

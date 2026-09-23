@@ -96,6 +96,11 @@ class App:
         # sem refazer nada.
         self._preparado: Any = None
         self._servidor_no_ar = False
+        # Id do bind de <FocusIn> que fareja a chave na area de transferencia
+        # em tela_chave(). Guardado aqui para poder desligar o bind antigo
+        # antes de criar outro — sem isso, cada vez que a Riot recusa uma
+        # chave e a tela volta, um novo vigia se empilha sobre o anterior.
+        self._vigia_area_de_transferencia: str | None = None
 
         self._montar_moldura()
         self.root.after(60, self._bombear)
@@ -267,7 +272,7 @@ class App:
         for n, t in (
             ("1", "Clique no botão abaixo para abrir o site da Riot"),
             ("2", "Entre com a sua conta do League"),
-            ("3", "Copie a chave que começa com RGAPI- e cole aqui"),
+            ("3", "Copie a chave que começa com RGAPI- — o RiftCoach detecta sozinho"),
         ):
             ln = tk.Frame(passos, bg=FUNDO_CARTAO)
             ln.pack(fill="x", pady=2)
@@ -289,6 +294,28 @@ class App:
         campo = Campo(self.corpo, senha=True)
         campo.pack(fill="x", ipady=7)
         campo.focus_set()
+
+        def farejar_area_de_transferencia() -> None:
+            # Chamado ao abrir a tela e sempre que a janela volta a ter foco
+            # (ex.: a pessoa colou a chave no navegador e alt-tabou de volta).
+            # So preenche um campo vazio: nunca sobrescreve o que a pessoa
+            # esta digitando.
+            if not campo.winfo_exists() or campo.get().strip():
+                return
+            try:
+                conteudo = self.root.clipboard_get().strip()
+            except tk.TclError:
+                return
+            if conteudo.startswith("RGAPI-"):
+                campo.insert(0, conteudo)
+                self._dizer("chave detectada — confira e clique em Continuar", SUCESSO)
+
+        if self._vigia_area_de_transferencia:
+            self.root.unbind("<FocusIn>", self._vigia_area_de_transferencia)
+        farejar_area_de_transferencia()
+        self._vigia_area_de_transferencia = self.root.bind(
+            "<FocusIn>", lambda _e: farejar_area_de_transferencia(), add="+"
+        )
 
         tk.Label(
             self.corpo,
@@ -339,6 +366,9 @@ class App:
                 from riftcoach.config import write_key_to_keyring
 
                 write_key_to_keyring("riot", r.dados)
+                if self._vigia_area_de_transferencia:
+                    self.root.unbind("<FocusIn>", self._vigia_area_de_transferencia)
+                    self._vigia_area_de_transferencia = None
                 self._dizer("chave guardada", SUCESSO)
                 self.tela_conta()
 
@@ -573,9 +603,27 @@ class App:
 
         if not self._servidor_no_ar:
             self._servidor_no_ar = True
-            threading.Thread(
-                target=lambda: serve(port=PORTA_WEB, open_browser=False), daemon=True
-            ).start()
+
+            def subir_servidor() -> None:
+                try:
+                    serve(port=PORTA_WEB, open_browser=False)
+                except BaseException as e:
+                    # uvicorn desiste com sys.exit() quando nao consegue
+                    # ligar na porta — o caso comum e OUTRA janela do
+                    # RiftCoach ja aberta e servindo ali. Sem isto o erro
+                    # morre aqui: pythonw nao tem console, a mensagem do
+                    # uvicorn nao vai a lugar nenhum, e o botao so parece
+                    # nao fazer nada.
+                    self._servidor_no_ar = False
+                    msg = (
+                        "já tem outra janela do RiftCoach aberta — feche as "
+                        "outras ou use o relatório por lá"
+                        if isinstance(e, SystemExit)
+                        else f"o servidor não subiu: {e}"
+                    )
+                    self._fila.put((lambda _a: self._dizer(msg, ERRO), None))
+
+            threading.Thread(target=subir_servidor, daemon=True).start()
 
         def quando_subir(tentativas: int = 40) -> None:
             """Espera a porta ACEITAR conexao, em vez de chutar um tempo fixo.

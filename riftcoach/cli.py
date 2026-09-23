@@ -20,8 +20,8 @@ from rich.table import Table
 from riftcoach.analysis.report import analyze as build_l5
 from riftcoach.analysis.report import analyze_with_ai as build_with_ai
 from riftcoach.config import (
-    PLATFORM_TO_ROUTING,
     delete_key_from_keyring,
+    normalize_platform,
     settings,
     write_key_to_keyring,
 )
@@ -528,7 +528,7 @@ def whoami(
 
     async def main() -> None:
         if platform:
-            settings.riot_platform = platform
+            settings.riot_platform = normalize_platform(platform)
         name, tag = _split_riot_id(riot_id)
         async with RiotClient() as rc:
             acct = await rc.account_by_riot_id(name, tag)
@@ -555,10 +555,7 @@ def fetch(
 
     async def main() -> None:
         if platform:
-            if platform.lower() not in PLATFORM_TO_ROUTING:
-                console.print(f"[red]Plataforma desconhecida:[/] {platform}")
-                raise typer.Exit(code=1)
-            settings.riot_platform = platform
+            settings.riot_platform = normalize_platform(platform)
 
         name, tag = _split_riot_id(riot_id)
         async with RiotClient() as rc:
@@ -703,10 +700,7 @@ def analyze(
 
     async def main() -> None:
         if platform:
-            if platform.lower() not in PLATFORM_TO_ROUTING:
-                console.print(f"[red]Plataforma desconhecida:[/] {platform}")
-                raise typer.Exit(code=1)
-            settings.riot_platform = platform
+            settings.riot_platform = normalize_platform(platform)
 
         name, tag = _split_riot_id(riot_id)
         async with RiotClient() as rc:
