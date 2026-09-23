@@ -264,7 +264,12 @@ async def analyze_with_ai(
             for nome, achados in analise.by_analyst.items()
         }
 
-    if do_modelo:
+    # O head coach so faz sentido quando HA o que unificar. No passe unico os
+    # quatro angulos ja sairam juntos e escolhidos pelo mesmo modelo; gastar
+    # outros 5.500 tokens de cota para ele revisar a propria saida seria pagar
+    # caro por nada — e num tier apertado essa chamada e a diferenca entre ter
+    # analise e nao ter.
+    if do_modelo and "completo" not in analise.by_analyst:
         escolhidos, erro = await run_head_coach(router, packet, analise)
         if erro:
             trace.head_coach_error = erro

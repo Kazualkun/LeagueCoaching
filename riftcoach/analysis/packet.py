@@ -117,6 +117,26 @@ class EvidencePacket:
         ]
         return "\n\n".join(p for p in partes if p)
 
+    def for_completo(self) -> str:
+        """Tudo o que os quatro analistas veriam, numa vista so.
+
+        Existe porque num tier gratuito com teto de TOKENS POR MINUTO cada
+        chamada reserva alguns milhares — medido contra o Groq, 5.465 por
+        passe contra um teto de 8.000. Quatro passes mais o head coach viram
+        cinco minutos de espera; esta vista cabe numa janela.
+
+        Nao e a soma das quatro fatias: as secoes se repetem entre elas, e
+        concatenar duplicaria metade do pacote. `render` sem filtro ja entrega
+        o conjunto uma vez so.
+        """
+        partes = [
+            facts_render.render(self.facts, None, self.resolver).strip(),
+            self._measured_block(),
+            self._benchmark_block(),
+            self._patch_block(),
+        ]
+        return "\n\n".join(p for p in partes if p)
+
     def for_head_coach(self, findings_por_analista: dict[str, list[Finding]]) -> str:
         """A entrada do head coach: cabecalho + o que cada analista achou.
 

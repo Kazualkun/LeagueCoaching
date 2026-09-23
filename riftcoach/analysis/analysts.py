@@ -117,6 +117,18 @@ class AnalystOutput(BaseModel):
     findings: list[AnalystFinding] = Field(default_factory=list, max_length=3)
 
 
+class CompletoOutput(BaseModel):
+    """A saida do passe unico.
+
+    Teto maior porque ele cobre QUATRO angulos, e nao um. Com o teto de 3 do
+    analista comum ele entregaria uma partida inteira em tres frases — e o
+    proprio prompt pede que pelo menos tres dos quatro angulos aparecam, o que
+    nao cabe em tres findings sem espremer.
+    """
+
+    findings: list[AnalystFinding] = Field(default_factory=list, max_length=8)
+
+
 class HeadCoachPick(BaseModel):
     """O head coach escolhe por REFERENCIA, nao reescrevendo.
 
@@ -265,6 +277,67 @@ async def run_analyst(
     return name, saida, ""
 
 
+# Quanto uma chamada custa contra a cota, com folga. Medido contra o Groq:
+# "Used 4233, Requested 5465" para um passe de analista — ou seja, entrada mais
+# a reserva de saida mais o overhead do proprio schema.
+CUSTO_POR_PASSE = 5_500
+
+# Quantas chamadas o formato de quatro analistas faz: os quatro mais o head
+# coach.
+PASSES_DO_FORMATO_LONGO = 5
+
+
+def _cabe_em_quatro_passes(router: ModelRouter) -> bool:
+    """A cota do provedor escolhido aguenta o formato de quatro analistas?
+
+    O Mixture-of-Analysts foi desenhado para modelo LOCAL, onde uma chamada a
+    mais nao custa nada alem de tempo. Num tier gratuito com teto de tokens
+    POR MINUTO a conta muda: o Groq da 8.000/min e cada passe pede 5.465,
+    entao cabe UMA chamada por minuto e as cinco viram cinco minutos de
+    espera. Medido, nao estimado.
+
+    Sem cota declarada — o Ollama local — a resposta e sempre sim.
+    """
+    for p in router.providers:
+        limite = p.profile.rate_limit
+        if limite is None or limite.tokens is None:
+            return True
+        if limite.tokens >= CUSTO_POR_PASSE * PASSES_DO_FORMATO_LONGO:
+            return True
+    return False
+
+
+async def _passe_completo(
+    router: ModelRouter, packet: EvidencePacket, duracao_ms: int
+) -> AnalysisResult:
+    """Os quatro angulos numa chamada so.
+
+    Entrega menos profundidade por angulo que quatro passes dedicados — e
+    entrega, o que os quatro passes nao fazem quando a cota nao alcanca. Um
+    relatorio com quatro angulos rasos vale mais que dois angulos fundos e
+    dois erros de cota.
+    """
+    resultado = AnalysisResult()
+    tarefa = text_task("analista_completo", CUSTO_POR_PASSE)
+    prompt = f"{load_prompt('completo')}\n\n=== DADOS DA PARTIDA ===\n{packet.for_completo()}\n"
+    try:
+        completo = await router.complete_validated(
+            tarefa, prompt, CompletoOutput, system=load_prompt("_system")
+        )
+    except (NoViableProvider, SchemaExhausted) as e:
+        resultado.failures["completo"] = e.message
+        return resultado
+
+    # `to_findings` so precisa de `.findings`, e os dois modelos o tem com o
+    # mesmo tipo de item — o que muda entre eles e so o teto.
+    conv = to_findings(AnalystOutput(findings=completo.findings), duracao_ms, "completo")
+    resultado.entities.update(dict(conv.entities.items()))
+    resultado.by_analyst["completo"] = conv.findings
+    resultado.findings.extend(conv.findings)
+    resultado.rejected.extend(conv.rejected)
+    return resultado
+
+
 async def run_analysts(router: ModelRouter, packet: EvidencePacket) -> AnalysisResult:
     """Os quatro, UM DE CADA VEZ.
 
@@ -284,9 +357,17 @@ async def run_analysts(router: ModelRouter, packet: EvidencePacket) -> AnalysisR
     Um analista que falha continua nao derrubando os outros: o erro fica na
     lista de falhas e o relatorio sai com os angulos que deram certo. Um
     relatorio com tres angulos e util; nenhum relatorio nao e.
+
+    E ONDE A COTA NAO DA PARA QUATRO, VIRA UM. Ver `_cabe_em_quatro_passes`:
+    quatro chamadas so fazem sentido onde chamada e barata em tempo e de graca
+    em cota, que e o caso do modelo local. Num tier gratuito apertado, o
+    formato certo e uma passada que responde as quatro perguntas.
     """
     duracao_ms = packet.facts.duration_s * 1000
     resultado = AnalysisResult()
+
+    if not _cabe_em_quatro_passes(router):
+        return await _passe_completo(router, packet, duracao_ms)
 
     for nome_do_analista in ANALYSTS:
         try:

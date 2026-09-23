@@ -679,7 +679,9 @@ def _barra_do_pincel(st: OverlayState) -> list[Primitive]:
     out.append(
         Label(x, meio, "PINCEL LIGADO", color=COR_CRITICO, size=fonte, bold=True, anchor="w")
     )
-    x += fonte * 9.5
+    # 12 unidades de fonte: "PINCEL LIGADO" em negrito ocupa perto de 10, e
+    # com 9,5 as bolinhas de cor encostavam no texto.
+    x += fonte * 12.0
 
     from riftcoach.overlay.desenho import CORES
 

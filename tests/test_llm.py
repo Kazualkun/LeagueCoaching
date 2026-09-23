@@ -1164,3 +1164,68 @@ def test_provedor_sem_cabecalho_de_cota_nao_e_afetado() -> None:
     assert _inteiro(None) is None
     assert _inteiro("nao sou numero") is None
     assert _inteiro("7912") == 7912
+
+
+# --------------------------------------------------------------------------
+# Quatro passes ou um so
+# --------------------------------------------------------------------------
+
+
+def test_cota_apertada_troca_quatro_passes_por_um() -> None:
+    """O Mixture-of-Analysts foi desenhado para modelo LOCAL, onde uma chamada
+    a mais nao custa nada alem de tempo.
+
+    Num tier gratuito com teto de tokens POR MINUTO a conta muda: medido
+    contra o Groq, 8.000/min e 5.465 por passe — cabe UMA chamada por minuto,
+    e as cinco viram cinco minutos de espera.
+    """
+    from riftcoach.analysis.analysts import (
+        CUSTO_POR_PASSE,
+        PASSES_DO_FORMATO_LONGO,
+        _cabe_em_quatro_passes,
+    )
+    from riftcoach.llm.base import RateLimit
+
+    class _FakeRouter:
+        def __init__(self, tokens: int | None) -> None:
+            self.providers = [
+                type(
+                    "P",
+                    (),
+                    {
+                        "profile": type(
+                            "Perfil",
+                            (),
+                            {"rate_limit": RateLimit(requests=100, window_s=60.0, tokens=tokens)},
+                        )()
+                    },
+                )()
+            ]
+
+    apertado = _FakeRouter(8_000)
+    assert not _cabe_em_quatro_passes(apertado)  # type: ignore[arg-type]
+
+    folgado = _FakeRouter(CUSTO_POR_PASSE * PASSES_DO_FORMATO_LONGO)
+    assert _cabe_em_quatro_passes(folgado)  # type: ignore[arg-type]
+
+    # Sem cota declarada (o Ollama local) sempre cabe.
+    assert _cabe_em_quatro_passes(_FakeRouter(None))  # type: ignore[arg-type]
+
+
+def test_o_passe_unico_pode_entregar_mais_findings() -> None:
+    """Ele cobre QUATRO angulos, e nao um. Com o teto de 3 do analista comum
+    entregaria uma partida inteira em tres frases."""
+    from riftcoach.analysis.analysts import AnalystOutput, CompletoOutput
+
+    assert AnalystOutput.model_fields["findings"].metadata[0].max_length == 3
+    assert CompletoOutput.model_fields["findings"].metadata[0].max_length == 8
+
+
+def test_o_prompt_do_passe_unico_existe() -> None:
+    """Prompt ausente so aparece em tempo de execucao, e ai ja gastou a cota
+    para descobrir."""
+    from riftcoach.analysis.analysts import load_prompt
+
+    texto = load_prompt("completo")
+    for palavra in ("Rota", "Macro", "Economia", "Lutas"):
+        assert palavra in texto, f"o passe unico precisa cobrir {palavra}"
