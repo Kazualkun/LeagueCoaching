@@ -948,7 +948,8 @@ def overlay(
         Ctrl+Alt+G   marcar algo que voce fez bem
         Ctrl+Alt+Q   marcar uma duvida
         Ctrl+Alt+S   pular para a proxima marcacao
-        Ctrl+Alt+R   voltar para onde voce parou da ultima vez
+        Ctrl+Alt+R   voltar para onde voce parou
+        Ctrl+Alt+A   abrir e fechar a ajuda NA TELA, a qualquer momento
         Ctrl+Alt+H   esconder o overlay
 
     As suas marcacoes e a sua posicao ficam salvas: ao reabrir a mesma partida

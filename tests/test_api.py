@@ -268,3 +268,50 @@ def test_open_guard_failure_is_409_not_500(client: Any, monkeypatch: pytest.Monk
     d = r.json()
     assert d["error"]
     assert d["hint"] and "pin-cert" in d["hint"]
+
+
+# --------------------------------------------------------------------------
+# A entrega da analise ao servidor
+# --------------------------------------------------------------------------
+
+
+def test_analise_feita_fora_chega_ao_relatorio() -> None:
+    """O bug que chegou ao usuario: a janela analisava por um caminho e o
+    servidor lia de outro, entao a pagina abria e a SPA levava 404 em
+    /api/report — "pagina nao encontrada" com o relatorio pronto na memoria do
+    processo ao lado.
+
+    Onde ha dois caminhos para produzir a mesma coisa, tem de haver UM lugar
+    onde ela e entregue. Este teste guarda esse lugar.
+    """
+    from fastapi.testclient import TestClient
+
+    from riftcoach.analysis.report import analyze
+    from riftcoach.api.app import SESSION, adopt, create_app
+    from riftcoach.parse.distill import distill
+    from tests.test_distill import load
+
+    SESSION.facts = None
+    SESSION.report = None
+    cliente = TestClient(create_app())
+    assert cliente.get("/api/report").status_code == 404, "sem analise, 404 e o certo"
+
+    match, tl = load("sr_ranked_35min")
+    facts = distill(match, tl, match["info"]["participants"][0]["puuid"])
+    relatorio, _ = analyze(facts)
+    adopt(facts, relatorio)
+
+    r = cliente.get("/api/report")
+    assert r.status_code == 200
+    corpo = r.json()
+    assert corpo["match_id"] == facts.match_id
+    assert corpo["findings"], "o relatorio entregue tem de chegar com os findings"
+
+
+def test_a_espera_pela_porta_nao_mente() -> None:
+    """Abrir o navegador por tempo fixo erra na maquina lenta — que e
+    justamente onde o servidor demora mais a subir."""
+    from riftcoach.api.app import esta_no_ar
+
+    # Uma porta que ninguem esta escutando.
+    assert esta_no_ar(1) is False

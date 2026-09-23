@@ -92,6 +92,10 @@ class App:
         self.estado = Estado()
         self._fila: queue.Queue[tuple[Callable[[Any], None], Any]] = queue.Queue()
         self._passo = 0
+        # A analise pronta, guardada para entregar ao servidor e ao overlay
+        # sem refazer nada.
+        self._preparado: Any = None
+        self._servidor_no_ar = False
 
         self._montar_moldura()
         self.root.after(60, self._bombear)
@@ -467,6 +471,7 @@ class App:
             for k in ("dados", "partida", "analise"):
                 andar(k, "ok")
             pre = r.dados
+            self._preparado = pre
             f = pre.facts
             self.estado.match_id = f.match_id
             self.estado.marcacoes = len(pre.state.marks)
@@ -550,15 +555,44 @@ class App:
         processo novo refaria a analise inteira para mostrar o que a janela
         acabou de calcular.
         """
+        from riftcoach.api.app import adopt, esta_no_ar, serve
+
+        if self._preparado is None:
+            self._dizer("analise ainda nao terminou", ALERTA)
+            return
+
+        # ENTREGAR A ANALISE AO SERVIDOR. Sem esta linha a pagina abre e a SPA
+        # leva 404 em /api/report — que foi o "pagina nao encontrada" que
+        # chegou ao usuario com o relatorio pronto na memoria ao lado.
+        adopt(
+            self._preparado.facts,
+            self._preparado.report,
+            self._preparado.benchmarks,
+        )
         self._dizer("abrindo o relatório no navegador...")
 
-        def servir() -> None:
-            from riftcoach.api.app import serve
+        if not self._servidor_no_ar:
+            self._servidor_no_ar = True
+            threading.Thread(
+                target=lambda: serve(port=PORTA_WEB, open_browser=False), daemon=True
+            ).start()
 
-            serve(port=PORTA_WEB, open_browser=False)
+        def quando_subir(tentativas: int = 40) -> None:
+            """Espera a porta ACEITAR conexao, em vez de chutar um tempo fixo.
 
-        threading.Thread(target=servir, daemon=True).start()
-        self.root.after(900, lambda: webbrowser.open(f"http://127.0.0.1:{PORTA_WEB}/"))
+            Um tempo fixo erra na maquina lenta — que e justamente onde o
+            servidor demora mais a subir, e onde abrir cedo demais mostra
+            "nao foi possivel acessar o site".
+            """
+            if esta_no_ar(PORTA_WEB):
+                webbrowser.open(f"http://127.0.0.1:{PORTA_WEB}/")
+                self._dizer("relatório aberto no navegador", SUCESSO)
+            elif tentativas:
+                self.root.after(150, lambda: quando_subir(tentativas - 1))
+            else:
+                self._dizer("o servidor local não subiu; tente de novo", ERRO)
+
+        quando_subir()
 
     def _abrir_overlay(self) -> None:
         """Abre o overlay como processo separado, e sem janela preta.

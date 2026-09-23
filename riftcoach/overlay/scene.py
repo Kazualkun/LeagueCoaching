@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from riftcoach.core.schema import Mark
+from riftcoach.overlay.atalhos import TODOS as ATALHOS
 from riftcoach.overlay.geometry import MinimapProjector, Rect, minimap_rect
 
 # --------------------------------------------------------------------------
@@ -446,12 +447,11 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
     ]
     # A explicacao do minimapa fica aqui E nos rotulos do proprio mapa. Quem
     # chega no minuto vinte nunca viu este cartao.
-    mapa = "no minimapa: VOCE = onde voce estava · AQUI = onde a jogada aconteceu"
-    atalhos = [
-        ("Ctrl+Alt+S", "pular para o próximo erro"),
-        ("Ctrl+Alt+E", "marcar um erro seu"),
-        ("Ctrl+Alt+H", "esconder isto"),
-    ]
+    mapa = "no minimapa: VOCÊ = onde você estava  ·  AQUI = onde a jogada aconteceu"
+    # TODOS os atalhos, e nao uma amostra. Este painel e a unica documentacao
+    # que a pessoa tem enquanto assiste, e uma lista parcial faz procurar no
+    # manual — que e exatamente o que ela nao vai fazer no meio de um replay.
+    atalhos = [(a.tecla, a.descricao) for a in ATALHOS]
     altura = pad * 2 + linha * (4.5 + len(legenda) + len(atalhos))
     caixa = Rect(x0, y0, larg, altura)
 
@@ -460,7 +460,17 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
         Box(Rect(x0, y0, max(3.0, 0.005 * u), altura), fill=COR_BOM),
     ]
     tx, ty = x0 + pad, y0 + pad
-    out.append(Label(tx, ty, "RIFTCOACH CONECTADO", color=COR_BOM, size=fonte, bold=True))
+    out.append(Label(tx, ty, "RIFTCOACH · AJUDA", color=COR_BOM, size=fonte, bold=True))
+    out.append(
+        Label(
+            x0 + larg - pad,
+            ty,
+            "Ctrl+Alt+A abre e fecha",
+            color=COR_FRACO,
+            size=fonte * 0.82,
+            anchor="ne",
+        )
+    )
     ty += linha
 
     if ia:
@@ -582,9 +592,9 @@ def _minimapa(st: OverlayState, m: Mark | None) -> list[Primitive]:
         ly, anc = acima_ou_abaixo(voce[1], r, preferir_abaixo=False)
         out.append(
             Label(
-                centrado(voce[0], "VOCE"),
+                centrado(voce[0], "VOCÊ"),
                 ly,
-                "VOCE",
+                "VOCÊ",
                 color="#ffffff",
                 size=fonte,
                 bold=True,

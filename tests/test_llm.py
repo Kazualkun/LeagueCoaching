@@ -16,6 +16,7 @@ deixar de ser rodado.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import httpx
@@ -542,18 +543,65 @@ async def test_a_500_is_transient(cfg) -> None:  # type: ignore[no-untyped-def]
 @respx.mock
 @pytest.mark.asyncio
 async def test_strong_schema_providers_are_marked_as_such(cfg) -> None:  # type: ignore[no-untyped-def]
-    """Groq oferece `json_object`, que promete JSON sintatico e nao o NOSSO
-    JSON. Tratar isso como garantia forte e o erro que faz um tier gratuito
-    queimar a cota em retentativas."""
+    """Quem tem `json_schema` promete o NOSSO JSON; quem so tem `json_object`
+    promete JSON sintatico e nada mais.
+
+    O Groq mudou de lado: hoje ele tem `json_schema`, e isso foi conferido
+    contra a API de verdade com `AnalystOutput` — `$defs` e tudo — que volta
+    valido de primeira. Enquanto este teste afirmava o contrario, o roteador
+    pedia `json_object` e levava 400, porque o Groq exige a palavra "json" nas
+    mensagens nesse modo.
+    """
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
         return_value=httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
     )
     async with OpenAICompatProvider(cfg, "m", api_key="k") as p:
         out = await p.complete("oi", schema={"type": "object"})
-    assert not out.schema_enforced
+    assert out.schema_enforced, "groq passou a ter json_schema"
+
+    for nome in ("ollama", "gemini", "groq"):
+        c = next(x for x in default_providers() if x.name == nome)
+        assert Capability.JSON_SCHEMA in c.caps
+
+    # Quem so tem `json_object` continua sendo garantia fraca.
+    fraco = next(c for c in default_providers() if c.name == "mistral")
+    assert Capability.JSON_SCHEMA not in fraco.caps
+
+
+def test_o_groq_nao_pede_strict_no_schema() -> None:
+    """`strict` do jeito da OpenAI exige `additionalProperties: false` em todo
+    objeto; o schema do pydantic nao e assim, e o Groq responde 400 — conferido
+    contra a API: `/$defs/AnalystEvidence: additionalProperties:false must be
+    set on every object`."""
+    groq = next(c for c in default_providers() if c.name == "groq")
+    assert groq.schema_strict is False
 
     ollama = next(c for c in default_providers() if c.name == "ollama")
-    assert Capability.JSON_SCHEMA in ollama.caps
+    assert ollama.schema_strict is True
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_modo_json_fraco_garante_a_palavra_json() -> None:
+    """O modo `json_object` exige a palavra "json" nas mensagens — regra da
+    OpenAI que os compativeis copiaram. Os nossos prompts sao em portugues e
+    nem sempre a contem, e a falta de UMA PALAVRA derrubava a analise inteira
+    com um 400 que chegava ao usuario disfarcado de "nenhum provedor atende a
+    tarefa"."""
+    capturado: dict[str, object] = {}
+
+    def registrar(request: httpx.Request) -> httpx.Response:
+        capturado.update(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    respx.post("https://api.mistral.ai/v1/chat/completions").mock(side_effect=registrar)
+    fraco = next(c for c in default_providers() if c.name == "mistral")
+    async with OpenAICompatProvider(fraco, "m", api_key="k") as p:
+        await p.complete("analise a partida", schema={"type": "object"})
+
+    mensagens = capturado["messages"]
+    assert isinstance(mensagens, list)
+    assert any("json" in str(m.get("content", "")).lower() for m in mensagens)
 
 
 # --------------------------------------------------------------------------
@@ -933,3 +981,102 @@ def test_cache_antigo_sem_ram_e_refeito(monkeypatch: pytest.MonkeyPatch, tmp_pat
     hw = asyncio.run(hw_mod.probe())
     assert hw.tier == "cpu"
     assert hw.ram_gb == 16.0
+
+
+# --------------------------------------------------------------------------
+# Cota de tokens
+# --------------------------------------------------------------------------
+
+
+def test_a_cota_de_tokens_repoe_continuamente() -> None:
+    """A versao anterior tratava tokens como janela fixa que zerava de 60 em
+    60 s, e por isso mandava esperar um minuto inteiro por poucos tokens.
+
+    O proprio Groq desmente a janela fixa: `x-ratelimit-reset-tokens: 659ms`
+    para uma chamada minuscula e reposicao continua, a 8000/60 por segundo.
+    """
+    from riftcoach.llm.base import RateLimit
+    from riftcoach.llm.breaker import RateLimiter
+
+    agora = [0.0]
+    lim = RateLimiter(clock=lambda: agora[0])
+    lim.register("groq", RateLimit(requests=1000, window_s=60.0, tokens=8000))
+
+    assert lim.has_budget("groq", 4200)
+    lim.consume("groq", 4200)
+    assert not lim.has_budget("groq", 4200), "8000 - 4200 nao cabe outra de 4200"
+
+    # A 133 tokens/s, faltam ~3 s para repor os 400 que faltam.
+    espera = lim.seconds_until_budget("groq", 4200)
+    assert 2.0 < espera < 4.0, f"esperado ~3s de reposicao continua, veio {espera}"
+
+    agora[0] += espera
+    assert lim.has_budget("groq", 4200)
+
+
+def test_gastar_mais_do_que_o_estimado_vira_divida() -> None:
+    """Zerar o excesso perdoaria o gasto e levaria a um 429 de verdade."""
+    from riftcoach.llm.base import RateLimit
+    from riftcoach.llm.breaker import RateLimiter
+
+    agora = [0.0]
+    lim = RateLimiter(clock=lambda: agora[0])
+    lim.register("groq", RateLimit(requests=1000, window_s=60.0, tokens=8000))
+
+    lim.consume("groq", 12_000)  # estourou o balde inteiro
+    assert not lim.has_budget("groq", 1)
+    # A divida atrasa: 4000 de excesso a 133/s sao ~30 s so para voltar a zero.
+    assert lim.seconds_until_budget("groq", 1) > 25.0
+
+
+def test_sem_cota_de_tokens_declarada_nada_bloqueia() -> None:
+    """O Ollama local nao tem cota, e limitar ali seria so deixar a maquina
+    ociosa."""
+    from riftcoach.llm.base import RateLimit
+    from riftcoach.llm.breaker import RateLimiter
+
+    lim = RateLimiter(clock=lambda: 0.0)
+    lim.register("ollama", RateLimit(requests=1000, window_s=60.0))
+    lim.consume("ollama", 999_999)
+    assert lim.has_budget("ollama", 999_999)
+
+
+def test_duracao_com_unidade_vira_segundos() -> None:
+    """O provedor manda "3.09s", "659ms", "1m2s". Tirar o "s" e converter
+    transformava 659ms em 659 segundos — onze minutos de espera por meio
+    segundo de cota."""
+    from riftcoach.llm.providers.openai_compat import _duracao_em_segundos
+
+    assert _duracao_em_segundos("3.09s") == pytest.approx(3.09)
+    assert _duracao_em_segundos("659ms") == pytest.approx(0.659)
+    assert _duracao_em_segundos("1m2s") == pytest.approx(62.0)
+    assert _duracao_em_segundos("30") == pytest.approx(30.0)  # Retry-After cru
+    assert _duracao_em_segundos("") is None
+    assert _duracao_em_segundos("depois") is None
+
+
+def test_429_por_cota_e_espera_nao_e_falha() -> None:
+    """Tratar 429 como falha de provedor quebrava a fila dos analistas: o
+    primeiro estourava a cota, o disjuntor abria, e os seguintes concluiam
+    "nao ha provedor" em vez de "espere tres segundos"."""
+    from riftcoach.llm.breaker import ProviderBreaker
+
+    agora = [0.0]
+    cb = ProviderBreaker(clock=lambda: agora[0])
+    cb.record_quota("groq", 3.0)
+
+    assert not cb.is_closed("groq")
+    falta = cb.segundos_ate_fechar_por_cota("groq")
+    assert falta is not None and falta == pytest.approx(3.0)
+
+    agora[0] += 3.0
+    assert cb.is_closed("groq"), "passado o prazo, volta a servir"
+
+
+def test_falha_de_verdade_nao_vira_espera() -> None:
+    """Paciencia nao conserta 500 nem conexao recusada."""
+    from riftcoach.llm.breaker import ProviderBreaker
+
+    cb = ProviderBreaker(clock=lambda: 0.0)
+    cb.record_transient("groq", "connection refused")
+    assert cb.segundos_ate_fechar_por_cota("groq") is None

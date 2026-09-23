@@ -293,6 +293,46 @@ async def prepare_session(
     return SESSION
 
 
+def adopt(
+    facts: MatchFacts,
+    report: CoachingReport,
+    benchmarks: list[Benchmark] | None = None,
+    trace: AiTrace | None = None,
+) -> Session:
+    """Entrega ao servidor uma analise que JA foi feita em outro lugar.
+
+    Existe por causa de um bug que chegou ate o usuario: a janela analisa pelo
+    caminho de `overlay/prepare.py` e o servidor le de `SESSION`, que so era
+    preenchida por `prepare_session`. Resultado — a pagina abria (200), a SPA
+    pedia /api/report, levava 404, e quem clicou em "Ler relatorio" via
+    "pagina nao encontrada" com a analise pronta na memoria do processo ao
+    lado.
+
+    A licao vale alem deste bug: onde ha dois caminhos para produzir a mesma
+    coisa, tem de haver UM lugar onde ela e entregue. Este e o lugar.
+    """
+    SESSION.facts = facts
+    SESSION.report = report
+    SESSION.benchmarks = benchmarks or []
+    SESSION.trace = trace
+    SESSION.replay_path = find_replay(facts.match_id)
+    return SESSION
+
+
+def esta_no_ar(port: int, host: str = HOST) -> bool:
+    """O servidor ja aceita conexao nesta porta?
+
+    Quem abre o navegador precisa disto: esperar um tempo fixo e chutar, e o
+    chute erra na maquina lenta — que e justamente onde o servidor demora mais
+    a subir.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.2)
+        return s.connect_ex((host, port)) == 0
+
+
 def serve(port: int = 8770, open_browser: bool = True) -> None:
     """Sobe o servidor. SO em 127.0.0.1 — ver o escopo no topo do modulo."""
     import uvicorn

@@ -26,6 +26,7 @@ erro de roteamento silencioso e indistinguivel de um bug.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import TypeVar
@@ -57,6 +58,19 @@ COST_ORDER = {"local": 0, "free_cloud": 1, "paid": 2}
 # original: se nem com os erros do pydantic realimentados literalmente o modelo
 # produz o schema, ele nao produz.
 SCHEMA_ATTEMPTS = 3
+
+# Quantas vezes esperar pela cota antes de desistir, e o teto de cada
+# espera.
+#
+# Oito, e nao tres, porque os quatro analistas mais o head coach formam
+# uma FILA: cada um espera a vez do anterior. No tier gratuito do Groq —
+# 8.000 tokens por minuto, ~4.200 por passe — isso da uns dois minutos e
+# meio de fila. Com tres esperas o ultimo da fila desistia, e o relatorio
+# saia faltando um angulo sem que nada explicasse por que.
+#
+# Esperar aqui nao gasta CPU: sao `sleep` do tamanho exato que falta.
+ESPERAS_POR_COTA = 8
+TETO_ESPERA_S = 65.0
 
 
 @dataclass
@@ -207,6 +221,60 @@ class ModelRouter:
             )
         return min(pool, key=lambda p: self.policy.rank(p.profile, task))
 
+    async def select_esperando(self, task: TaskSpec) -> OpenAICompatProvider:
+        """Como `select`, mas ESPERA quando o unico impedimento e a cota.
+
+        Num tier gratuito, "voce gastou os 8 mil tokens deste minuto" nao e
+        uma falha: e o provedor pedindo para ir mais devagar. Tratar isso como
+        erro foi o que fez quatro analistas virarem "nenhum provedor atende a
+        tarefa" — uma mensagem que nao tem nada a ver com a causa e nao sugere
+        a acao certa, que era simplesmente aguardar alguns segundos.
+
+        A espera e limitada: passar de uma janela inteira significa que o
+        problema nao e ritmo, e ai falhar rapido vale mais que insistir.
+        """
+        for _ in range(ESPERAS_POR_COTA):
+            try:
+                return self.select(task)
+            except NoViableProvider:
+                espera = self._espera_por_cota(task)
+                if espera is None:
+                    raise
+                await asyncio.sleep(min(espera, TETO_ESPERA_S))
+        return self.select(task)
+
+    def _espera_por_cota(self, task: TaskSpec) -> float | None:
+        """Quantos segundos ate algum provedor ter cota — None se o problema
+        for outro.
+
+        A distincao e o ponto: so vale esperar quando o provedor esta apto em
+        tudo menos orcamento. Se ele nao tem a capacidade exigida, ou se o
+        disjuntor abriu, esperar nao muda nada.
+        """
+        prazos: list[float] = []
+        for p in self.providers:
+            perfil = p.profile
+            if not (self.policy.allows(perfil) and perfil.supports(task)):
+                continue
+
+            # Disjuntor aberto POR COTA tambem e espera, e nao beco sem saida.
+            # Tratar o 429 como falha de provedor foi o que quebrou a fila dos
+            # analistas: o primeiro estourava a cota, o disjuntor abria, e os
+            # seguintes concluiam "nao ha provedor" em vez de "espere tres
+            # segundos".
+            por_cota = self.guard.breaker.segundos_ate_fechar_por_cota(perfil.name)
+            if por_cota is not None:
+                prazos.append(por_cota)
+                continue
+            if not self.guard.breaker.is_closed(perfil.name):
+                continue
+            if self.guard.limiter.has_budget(perfil.name, task.est_input_tokens):
+                continue  # tem cota: o impedimento e outro
+            prazos.append(
+                self.guard.limiter.seconds_until_budget(perfil.name, task.est_input_tokens)
+            )
+        return min(prazos) if prazos else None
+
     def _diagnose(self, task: TaskSpec) -> str:
         """Por que cada provedor esta fora. Isto vira a mensagem que o usuario
         le, entao precisa nomear a acao que resolve."""
@@ -229,7 +297,7 @@ class ModelRouter:
             elif not self.guard.breaker.is_closed(perfil.name):
                 linhas.append(f"  {perfil.name}: {self.guard.breaker.reason(perfil.name)}")
             elif not self.guard.limiter.has_budget(perfil.name, task.est_input_tokens):
-                espera = self.guard.limiter.seconds_until_budget(perfil.name)
+                espera = self.guard.limiter.seconds_until_budget(perfil.name, task.est_input_tokens)
                 linhas.append(f"  {perfil.name}: cota local esgotada, libera em {espera:.0f}s")
 
         if not linhas:
@@ -304,7 +372,7 @@ class ModelRouter:
         esquema = model.model_json_schema()
 
         for tentativa in range(SCHEMA_ATTEMPTS):
-            provider = self.select(task)
+            provider = await self.select_esperando(task)
             nome = provider.profile.name
             tentados.add(nome)
             self.guard.limiter.consume(nome, task.est_input_tokens)

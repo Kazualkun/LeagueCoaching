@@ -195,6 +195,12 @@ def main() -> None:
         caminho = gerar(FUNDO, build(st, t_ms), SAIDA / nome, escala=0.8)
         print(f"{caminho.relative_to(RAIZ)}  —  {descricao}")
 
+    # O painel de ajuda e a documentacao do overlay que a pessoa le enquanto
+    # assiste; a figura dele sai do mesmo codigo, entao nunca descreve uma
+    # versao que nao existe mais.
+    caminho = gerar(FUNDO, build(st, 0, boas_vindas=True), SAIDA / "overlay-ajuda.jpg", escala=0.8)
+    print(f"{caminho.relative_to(RAIZ)}  —  o painel de ajuda, aberto com Ctrl+Alt+A")
+
     if "--sem-janela" not in sys.argv:
         figuras_da_janela()
 

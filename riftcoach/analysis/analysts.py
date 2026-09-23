@@ -22,7 +22,6 @@ resolve deduplicando em (categoria, t +/- 30s).
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -46,8 +45,15 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 # Estimativas de entrada por analista, em tokens. Servem para o roteador
 # escolher um provedor com contexto suficiente — nao precisam ser exatas,
 # precisam nao subestimar.
-EST_TOKENS = {"laning": 1400, "macro": 1200, "economy": 1300, "fights": 1300}
-EST_TOKENS_HEAD_COACH = 2000
+# CUSTO CONTRA A COTA, nao tamanho do prompt. A diferenca importa: o
+# provedor reserva `max_tokens` de saida ao aceitar a chamada, entao uma
+# estimativa so de entrada subestima em mais de 2 mil tokens e o limitador
+# deixa passar chamadas que vao levar 429.
+#
+# Medido contra BR1_3285636947: entrada de 1.791 a 2.175 tokens, mais os
+# 2.048 reservados de saida.
+EST_TOKENS = {"laning": 4300, "macro": 3900, "economy": 4300, "fights": 3900}
+EST_TOKENS_HEAD_COACH = 4500
 
 
 @lru_cache(maxsize=16)
@@ -260,19 +266,35 @@ async def run_analyst(
 
 
 async def run_analysts(router: ModelRouter, packet: EvidencePacket) -> AnalysisResult:
-    """Os quatro em paralelo.
+    """Os quatro, UM DE CADA VEZ.
 
-    `return_exceptions=True` e proposital: um analista que falha nao pode
-    derrubar os outros tres. Um relatorio com tres angulos e util; nenhum
-    relatorio nao e.
+    Eram em paralelo, e medido contra o tier gratuito do Groq isso saia pior.
+    O gargalo la nao e latencia, e cota: 8.000 tokens por minuto, ~4.200 por
+    passe. Quatro chamadas simultaneas somam 16 mil, todas levam 429, e as que
+    esperam acordam juntas para disputar a mesma cota de novo. Nas medicoes,
+    dois dos quatro analistas desistiam.
+
+    Em serie, o limitador espaca as chamadas pelo tempo exato que falta e os
+    quatro passam. O relogio de parede nao piora — com teto de tokens ele ja
+    era a soma, nao o maximo — e some a disputa.
+
+    Contra um Ollama local a serie tambem nao custa: e um servidor de modelo
+    so, que enfileira internamente de qualquer jeito.
+
+    Um analista que falha continua nao derrubando os outros: o erro fica na
+    lista de falhas e o relatorio sai com os angulos que deram certo. Um
+    relatorio com tres angulos e util; nenhum relatorio nao e.
     """
     duracao_ms = packet.facts.duration_s * 1000
     resultado = AnalysisResult()
 
-    tarefas = [run_analyst(router, packet, nome) for nome in ANALYSTS]
-    for saida in await asyncio.gather(*tarefas, return_exceptions=True):
-        if isinstance(saida, BaseException):
-            resultado.failures["desconhecido"] = str(saida)
+    for nome_do_analista in ANALYSTS:
+        try:
+            saida: tuple[str, AnalystOutput | None, str] = await run_analyst(
+                router, packet, nome_do_analista
+            )
+        except Exception as e:
+            resultado.failures[nome_do_analista] = str(e)
             continue
         nome, dados, erro = saida
         if dados is None:

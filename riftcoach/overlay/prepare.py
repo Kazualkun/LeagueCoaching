@@ -9,13 +9,14 @@ a analise a cada tentativa.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from riftcoach.analysis.report import analyze, analyze_with_ai
 from riftcoach.core.errors import RiftCoachError
 from riftcoach.core.review import load_session, open_session, save_session
 from riftcoach.core.schema import CoachingReport, ReviewSession
+from riftcoach.knowledge.benchmarks import Benchmark, BenchmarkTable
 from riftcoach.knowledge.sync import PatchDB
 from riftcoach.overlay.locais import local_do_evento, local_do_jogador
 from riftcoach.overlay.run import focus_track
@@ -31,6 +32,10 @@ class Preparado:
     session: ReviewSession
     facts: MatchFacts
     report: CoachingReport
+    # Calculados aqui, e nao so no caminho da CLI, para que o relatorio aberto
+    # pela janela tenha o MESMO conteudo. Dois caminhos que produzem
+    # relatorios diferentes e um bug esperando acontecer.
+    benchmarks: list[Benchmark] = field(default_factory=list)
 
 
 async def preparar(
@@ -96,6 +101,7 @@ async def preparar(
 
     trilha = focus_track(timeline, facts.focus.participant_id)
     _dar_lugar(sessao, timeline, trilha)
+    marcas_de_referencia = BenchmarkTable(patch=facts.patch).evaluate(facts, None)
 
     st = OverlayState(
         width=1600,
@@ -107,7 +113,13 @@ async def preparar(
         focus_track=trilha,
         focus_champion=facts.focus.champion,
     )
-    return Preparado(state=st, session=sessao, facts=facts, report=report)
+    return Preparado(
+        state=st,
+        session=sessao,
+        facts=facts,
+        report=report,
+        benchmarks=marcas_de_referencia,
+    )
 
 
 def _dar_lugar(

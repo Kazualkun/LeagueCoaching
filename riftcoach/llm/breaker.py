@@ -48,6 +48,10 @@ class BreakerState(StrEnum):
 class _Entry:
     state: BreakerState = BreakerState.CLOSED
     open_until: float = 0.0
+    # Aberto por COTA (429) ou por falha de verdade? A diferenca decide se
+    # vale esperar: cota estourada e o provedor pedindo ritmo, e esperar
+    # resolve. Falha de verdade nao melhora com paciencia.
+    por_cota: bool = False
     backoff_s: float = BACKOFF_START_S
     schema_violations: int = 0
     last_reason: str = ""
@@ -107,13 +111,27 @@ class ProviderBreaker:
         espera = retry_after_s if retry_after_s and retry_after_s > 0 else BACKOFF_MAX_S
         e.state = BreakerState.OPEN
         e.open_until = self._clock() + espera
+        e.por_cota = True
         e.last_reason = f"cota atingida; liberado em {espera:.0f}s"
+
+    def segundos_ate_fechar_por_cota(self, provider: str) -> float | None:
+        """Quanto falta para reabrir, SE o motivo foi cota. None se nao foi.
+
+        Existe porque tratar 429 como falha foi o que quebrou a fila dos
+        analistas: o primeiro estourava a cota, o disjuntor abria, e quem
+        esperava concluia "nao ha provedor" em vez de "espere tres segundos".
+        """
+        e = self._entries.get(provider)
+        if e is None or not e.por_cota or e.state is not BreakerState.OPEN:
+            return None
+        return max(0.0, e.open_until - self._clock())
 
     def record_transient(self, provider: str, detail: str = "") -> None:
         """5xx, timeout, conexao recusada. Recuo exponencial."""
         e = self._entry(provider)
         if e.state is BreakerState.BURNED:
             return
+        e.por_cota = False
         if e.state is BreakerState.HALF_OPEN:
             # A sondagem falhou: dobra antes de abrir de novo.
             e.backoff_s = min(e.backoff_s * 2, BACKOFF_MAX_S)
@@ -158,11 +176,26 @@ class ProviderBreaker:
 
 @dataclass
 class _Bucket:
+    """Dois baldes furados no mesmo provedor: requisicoes e tokens.
+
+    OS DOIS VAZAM CONTINUAMENTE, e a versao anterior errava nisso. Ela tratava
+    tokens como uma janela fixa que zerava de 60 em 60 segundos, e por isso
+    esperava ate um minuto inteiro quando faltavam poucos tokens.
+
+    O cabecalho do proprio Groq desmente a janela fixa:
+
+        x-ratelimit-limit-tokens: 8000
+        x-ratelimit-reset-tokens: 659ms
+
+    659 milissegundos para repor o que uma chamada minuscula gastou — isso e
+    reposicao continua, a 8000/60 = ~133 tokens por segundo. Com o modelo
+    certo, esperar por 4.200 tokens custa ~32 s em vez de ate 60.
+    """
+
     limit: RateLimit
-    allowance: float
+    allowance: float  # requisicoes disponiveis
+    tokens_livres: float  # tokens disponiveis
     last: float
-    spent_tokens: int = 0
-    window_started: float = 0.0
 
 
 class RateLimiter:
@@ -177,18 +210,25 @@ class RateLimiter:
             return
         agora = self._clock()
         self._buckets[provider] = _Bucket(
-            limit=limit, allowance=float(limit.requests), last=agora, window_started=agora
+            limit=limit,
+            allowance=float(limit.requests),
+            tokens_livres=float(limit.tokens if limit.tokens is not None else 0),
+            last=agora,
         )
 
     def _refill(self, b: _Bucket) -> None:
         agora = self._clock()
         decorrido = agora - b.last
         b.last = agora
-        taxa = b.limit.requests / b.limit.window_s
-        b.allowance = min(float(b.limit.requests), b.allowance + decorrido * taxa)
-        if agora - b.window_started >= b.limit.window_s:
-            b.window_started = agora
-            b.spent_tokens = 0
+        b.allowance = min(
+            float(b.limit.requests),
+            b.allowance + decorrido * (b.limit.requests / b.limit.window_s),
+        )
+        if b.limit.tokens is not None:
+            b.tokens_livres = min(
+                float(b.limit.tokens),
+                b.tokens_livres + decorrido * (b.limit.tokens / b.limit.window_s),
+            )
 
     def has_budget(self, provider: str, tokens: int = 0) -> bool:
         """Provedor sem cota declarada tem orcamento infinito — e o caso do
@@ -199,7 +239,7 @@ class RateLimiter:
         self._refill(b)
         if b.allowance < 1.0:
             return False
-        return not (b.limit.tokens is not None and b.spent_tokens + tokens > b.limit.tokens)
+        return not (b.limit.tokens is not None and tokens > b.tokens_livres)
 
     def consume(self, provider: str, tokens: int = 0) -> None:
         b = self._buckets.get(provider)
@@ -207,17 +247,35 @@ class RateLimiter:
             return
         self._refill(b)
         b.allowance = max(0.0, b.allowance - 1.0)
-        b.spent_tokens += tokens
+        if b.limit.tokens is not None:
+            # Pode ficar negativo: uma chamada que gastou mais do que se
+            # estimou deixa divida, e a divida atrasa a proxima. Zerar aqui
+            # perdoaria o excesso e levaria a um 429 de verdade.
+            b.tokens_livres -= tokens
 
-    def seconds_until_budget(self, provider: str) -> float:
+    def seconds_until_budget(self, provider: str, tokens: int = 0) -> float:
+        """Quanto falta ate caber uma chamada de `tokens`.
+
+        CONSIDERA OS DOIS TETOS, e essa foi a falha: a versao anterior olhava
+        so a fila de requisicoes e devolvia 0 sempre que sobrava requisicao —
+        mesmo com a cota de TOKENS estourada. Quem esperava por esse numero
+        nao esperava nada, tentava de novo na hora, e falhava igual.
+
+        Os dois prazos se somam por `max`, nao por `min`: a chamada so cabe
+        quando AMBOS os tetos liberam.
+        """
         b = self._buckets.get(provider)
         if b is None:
             return 0.0
         self._refill(b)
-        if b.allowance >= 1.0:
-            return 0.0
-        taxa = b.limit.requests / b.limit.window_s
-        return (1.0 - b.allowance) / taxa
+        prazos: list[float] = []
+        if b.allowance < 1.0:
+            taxa = b.limit.requests / b.limit.window_s
+            prazos.append((1.0 - b.allowance) / taxa)
+        if b.limit.tokens is not None and tokens > b.tokens_livres:
+            taxa = b.limit.tokens / b.limit.window_s
+            prazos.append(max(0.0, (tokens - b.tokens_livres) / taxa))
+        return max(prazos) if prazos else 0.0
 
 
 # --------------------------------------------------------------------------

@@ -24,8 +24,18 @@ from typing import Any
 
 from riftcoach.core.errors import LiveGameRefused
 from riftcoach.core.review import add_user_mark, save_session
-from riftcoach.core.schema import MarkKind, ReviewSession
+from riftcoach.core.schema import ReviewSession
 from riftcoach.overlay import window as win
+from riftcoach.overlay.atalhos import (
+    POR_CODIGO,
+    TODOS,
+    VK_AJUDA,
+    VK_CONTROL,
+    VK_MENU,
+    VK_OCULTAR,
+    VK_RETOMAR,
+    VK_SEGUINTE,
+)
 from riftcoach.overlay.geometry import Rect
 from riftcoach.overlay.render import OverlayWindow
 from riftcoach.overlay.scene import OverlayState, build
@@ -56,9 +66,9 @@ BOAS_VINDAS_S = 12.0
 # Atalhos
 # --------------------------------------------------------------------------
 
-# Ctrl+Alt+<tecla>. Escolhido porque o League nao usa essa combinacao em nada,
-# entao nao ha como colidir com um atalho do jogo — e porque um atalho de uma
-# tecla so seria disparado sem querer o tempo todo durante a revisao.
+# Os codigos e os rotulos vivem em `atalhos.py`, definidos UMA vez. Eles ja
+# moraram em tres lugares — aqui, no painel e na ajuda da CLI — e tres copias
+# da mesma verdade envelhecem em ritmos diferentes.
 #
 # ATENCAO, e isto e questao de postura e nao de codigo: a leitura e do ESTADO
 # do teclado pelo sistema operacional, so enquanto a janela do League esta em
@@ -66,23 +76,6 @@ BOAS_VINDAS_S = 12.0
 # para o jogo em momento nenhum. Combinado com o guard, que so deixa o overlay
 # existir sobre um replay, nao ha caminho daqui para dentro de uma partida ao
 # vivo.
-VK_CONTROL = 0x11
-VK_MENU = 0x12  # Alt
-
-ATALHOS: dict[int, tuple[str, MarkKind]] = {
-    0x45: ("erro", "error"),  # E
-    0x4E: ("nota", "note"),  # N
-    0x47: ("acerto", "good"),  # G
-    0x51: ("duvida", "question"),  # Q
-}
-VK_OCULTAR = 0x48  # H
-VK_RETOMAR = 0x52  # R — volta para onde a revisao parou
-VK_SEGUINTE = 0x53  # S — pula para a proxima marcacao
-
-# As duas teclas de navegacao fazem o replay ANDAR, entao elas passam pelo
-# controller e nao pelo guard cru: e ele que sabe que o alvo de um erro e 8
-# segundos ANTES da decisao, e nao o instante marcado.
-NAVEGACAO = (VK_RETOMAR, VK_SEGUINTE)
 
 
 class _Teclas:
@@ -167,6 +160,7 @@ async def executar(
         # — ler depois devolveria "onde voce esta", que nao serve para nada.
         aberto_em = time.monotonic()
         ja_apareceu = False
+        ajuda = False
         retomar_de = rs.last_position_ms if rs and rs.last_position_ms > 0 else None
         if retomar_de:
             log(f"voce parou em {_mmss(retomar_de)} — Ctrl+Alt+R volta para la")
@@ -220,16 +214,23 @@ async def executar(
                 break
 
             agora_ms = cal.to_timeline_ms(pb.time)
-            saudando = (time.monotonic() - aberto_em) < BOAS_VINDAS_S
-            overlay.desenhar(build(st, agora_ms, boas_vindas=saudando))
+            # O painel aparece sozinho no comeco e sob demanda depois.
+            painel = ajuda or (time.monotonic() - aberto_em) < BOAS_VINDAS_S
+            overlay.desenhar(build(st, agora_ms, boas_vindas=painel))
             overlay.bombear()
             res.quadros += 1
 
             if atalhos:
-                for vk in teclas.novas([*ATALHOS, VK_OCULTAR, *NAVEGACAO]):
+                for vk in teclas.novas([a.vk for a in TODOS]):
+                    atalho = POR_CODIGO[vk]
                     if vk == VK_OCULTAR:
                         oculto = True
-                    elif vk in NAVEGACAO:
+                    elif vk == VK_AJUDA:
+                        # A ajuda precisa estar disponivel SEMPRE, e nao so nos
+                        # primeiros segundos: quem abriu o overlay no minuto
+                        # vinte nunca viu o cartao de apresentacao.
+                        ajuda = not ajuda
+                    elif vk in (VK_RETOMAR, VK_SEGUINTE):
                         alvo = (
                             retomar_de if vk == VK_RETOMAR else _proxima_marca_depois(st, agora_ms)
                         )
@@ -238,12 +239,13 @@ async def executar(
                             continue
                         await ctrl.seek_to_ms(alvo)
                         log(f"pulando para {_mmss(alvo)}")
-                    elif rs is not None:
-                        rotulo, kind = ATALHOS[vk]
-                        m = add_user_mark(rs, agora_ms, kind, f"({rotulo}) marcado por voce")
+                    elif rs is not None and atalho.marca is not None:
+                        m = add_user_mark(
+                            rs, agora_ms, atalho.marca, f"({atalho.rotulo}) marcado por voce"
+                        )
                         st.marks = sorted([*st.marks, m], key=lambda x: x.t_ms)
                         res.marcas_do_usuario += 1
-                        log(f"marcacao '{rotulo}' salva em {_mmss(agora_ms)}")
+                        log(f"marcacao '{atalho.rotulo}' salva em {_mmss(agora_ms)}")
 
             if rs is not None:
                 # Gravar a posicao a cada quadro seria uma escrita em disco dez

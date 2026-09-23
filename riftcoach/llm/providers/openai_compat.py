@@ -146,7 +146,11 @@ class OpenAICompatProvider:
                 {
                     "response_format": {
                         "type": "json_schema",
-                        "json_schema": {"name": "resposta", "schema": schema, "strict": True},
+                        "json_schema": {
+                            "name": "resposta",
+                            "schema": schema,
+                            "strict": self.config.schema_strict,
+                        },
                     }
                 },
                 True,
@@ -157,9 +161,44 @@ class OpenAICompatProvider:
         return {}, False
 
     @staticmethod
+    def _garante_a_palavra_json(mensagens: list[dict[str, Any]]) -> None:
+        """O modo `json_object` exige a palavra "json" nas mensagens.
+
+        E uma regra da OpenAI que os compativeis copiaram, e o Groq a aplica:
+        sem a palavra, 400. Os nossos prompts sao em portugues e nem sempre a
+        contem, entao uma falha de UMA PALAVRA derrubava a analise inteira — e
+        ainda chegava ao usuario disfarcada de "nenhum provedor atende a
+        tarefa", porque o 400 abria o disjuntor antes de alguem ler o corpo.
+        """
+        if any("json" in str(m.get("content", "")).lower() for m in mensagens):
+            return
+        for m in mensagens:
+            if m.get("role") == "system":
+                m["content"] = str(m["content"]) + "\n\nResponda somente com JSON."
+                return
+        mensagens.insert(0, {"role": "system", "content": "Responda somente com JSON."})
+
+    @staticmethod
     def _retry_after(resp: httpx.Response) -> float | None:
-        for header in ("retry-after", "x-ratelimit-reset-requests"):
+        """Quantos segundos o provedor mandou esperar.
+
+        `x-ratelimit-reset-tokens` estava faltando, e era justamente o que
+        importava: num tier gratuito o teto que aperta e o de TOKENS, nao o de
+        requisicoes. Sem ler esse cabecalho o 429 vinha sem prazo, o disjuntor
+        assumia o recuo maximo, e uma pausa de tres segundos virava um minuto.
+
+        Os valores vem com unidade — "3.09s", "659ms", "1m2s" — entao nao da
+        para tirar o "s" e converter.
+        """
+        for header in (
+            "retry-after",
+            "x-ratelimit-reset-tokens",
+            "x-ratelimit-reset-requests",
+        ):
             if (v := resp.headers.get(header)) is not None:
+                segundos = _duracao_em_segundos(v)
+                if segundos is not None:
+                    return segundos
                 try:
                     return float(v.rstrip("s"))
                 except ValueError:
@@ -206,12 +245,14 @@ class OpenAICompatProvider:
         system: str | None = None,
         max_tokens: int = 2048,
     ) -> Completion:
-        mensagens: list[dict[str, str]] = []
+        mensagens: list[dict[str, Any]] = []
         if system:
             mensagens.append({"role": "system", "content": system})
         mensagens.append({"role": "user", "content": prompt})
 
         campos_json, forte = self._json_mode(schema)
+        if campos_json.get("response_format", {}).get("type") == "json_object":
+            self._garante_a_palavra_json(mensagens)
         corpo: dict[str, Any] = {
             "model": self.model,
             "messages": mensagens,
@@ -317,3 +358,47 @@ class OpenAICompatProvider:
             return resp.is_success
         except httpx.HTTPError:
             return False
+
+
+def _duracao_em_segundos(texto: str) -> float | None:
+    """ "3.09s", "659ms", "1m2s" -> segundos. None quando nao reconhece.
+
+    Escrito a mao em vez de regex complicada porque o conjunto de formas e
+    pequeno e conhecido, e porque errar aqui vira uma espera de um minuto onde
+    bastavam tres segundos.
+    """
+    t = texto.strip().lower()
+    if not t:
+        return None
+    total = 0.0
+    numero = ""
+    achou = False
+    i = 0
+    while i < len(t):
+        c = t[i]
+        if c.isdigit() or c == ".":
+            numero += c
+            i += 1
+            continue
+        if not numero:
+            return None
+        if t[i : i + 2] == "ms":
+            total += float(numero) / 1000.0
+            i += 2
+        elif c == "s":
+            total += float(numero)
+            i += 1
+        elif c == "m":
+            total += float(numero) * 60.0
+            i += 1
+        elif c == "h":
+            total += float(numero) * 3600.0
+            i += 1
+        else:
+            return None
+        numero = ""
+        achou = True
+    if numero:  # numero solto no fim: segundos, por convencao do Retry-After
+        total += float(numero)
+        achou = True
+    return total if achou else None

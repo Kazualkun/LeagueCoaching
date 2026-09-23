@@ -161,7 +161,7 @@ def test_o_minimapa_rotula_os_dois_pontos_na_propria_tela() -> None:
     minuto vinte. Os rotulos ficam no mapa, sempre."""
     st = estado(marca_com_lugar(900))
     textos = [i.text for i in build(st, 900_000).items if isinstance(i, Label)]
-    assert "VOCE" in textos
+    assert "VOCÊ" in textos
     assert "AQUI" in textos
 
 
@@ -196,7 +196,7 @@ def test_so_o_lugar_da_jogada_ja_basta() -> None:
     st = estado(marca_com_lugar(900, voce=None))
     textos = [i.text for i in build(st, 900_000).items if isinstance(i, Label)]
     assert "AQUI" in textos
-    assert "VOCE" not in textos
+    assert "VOCÊ" not in textos
 
 
 # --------------------------------------------------------------------------
@@ -321,7 +321,7 @@ def test_o_cartao_de_boas_vindas_explica_as_cores() -> None:
     """A razao de ele existir: sem legenda, listra colorida e decoracao."""
     st = estado(marca(900, sev=5), marca(1200, sev=2))
     textos = [i.text for i in build(st, 0, boas_vindas=True).items if isinstance(i, Label)]
-    assert any("CONECTADO" in t for t in textos)
+    assert any("AJUDA" in t for t in textos)
     assert any("custou a partida" in t for t in textos)
     assert any("suas marcações" in t for t in textos)
     assert any("Ctrl+Alt+S" in t for t in textos)
@@ -342,7 +342,7 @@ def test_as_boas_vindas_tomam_o_lugar_do_cartao_de_erro() -> None:
     # daria falso positivo contra o rodape do proprio cartao de boas-vindas.
     st = estado(marca(900, sev=5, texto="wave empurrada sem visao"))
     textos = [i.text for i in build(st, 900_000, boas_vindas=True).items if isinstance(i, Label)]
-    assert any("CONECTADO" in t for t in textos)
+    assert any("AJUDA" in t for t in textos)
     assert not any("wave empurrada" in t for t in textos)
 
 
@@ -406,7 +406,7 @@ def test_rotulo_perto_da_borda_nao_vaza_da_tela() -> None:
     # Canto do mapa que cai no extremo direito do minimapa.
     st = estado(marca_com_lugar(900, onde=(14800.0, 100.0), voce=(14800.0, 200.0)))
     rotulos = [i for i in build(st, 900_000).items if isinstance(i, Label)]
-    nos_cantos = [i for i in rotulos if i.text in ("VOCE", "AQUI")]
+    nos_cantos = [i for i in rotulos if i.text in ("VOCÊ", "AQUI")]
     assert len(nos_cantos) == 2
     for lab in nos_cantos:
         meia = len(lab.text) * lab.size * 0.35
@@ -423,3 +423,31 @@ def test_rotulo_no_pe_do_minimapa_sobe_em_vez_de_sair_da_tela() -> None:
     aqui = next(i for i in build(st, 900_000).items if isinstance(i, Label) and i.text == "AQUI")
     assert aqui.anchor == "s", "sem espaco embaixo, o rotulo tem de ir para cima"
     assert aqui.y < st.height
+
+
+# --------------------------------------------------------------------------
+# Uma fonte so para os atalhos
+# --------------------------------------------------------------------------
+
+
+def test_o_painel_mostra_todos_os_atalhos() -> None:
+    """Lista parcial faz procurar no manual — que e exatamente o que ninguem
+    vai fazer no meio de um replay."""
+    from riftcoach.overlay.atalhos import TODOS
+
+    st = estado(marca(900))
+    textos = [i.text for i in build(st, 0, boas_vindas=True).items if isinstance(i, Label)]
+    for a in TODOS:
+        assert a.tecla in textos, f"{a.tecla} ({a.descricao}) nao aparece no painel"
+
+
+def test_a_ajuda_da_cli_nao_diverge_dos_atalhos() -> None:
+    """Os atalhos ja moraram em tres lugares. Acrescentar um e esquecer de um
+    dos tres produz ou uma tecla que ninguem descobre ou um texto que promete
+    o que nao existe — as duas falham em silencio."""
+    from riftcoach.cli import overlay as comando_overlay
+    from riftcoach.overlay.atalhos import TODOS
+
+    ajuda = comando_overlay.__doc__ or ""
+    for a in TODOS:
+        assert a.tecla in ajuda, f"{a.tecla} falta na ajuda de `riftcoach overlay`"

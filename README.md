@@ -68,7 +68,11 @@ E você marca as suas, com a janela do jogo na frente:
 | `Ctrl+Alt+Q` | uma dúvida para rever depois |
 | `Ctrl+Alt+S` | pular para a **próxima** marcação |
 | `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
+| `Ctrl+Alt+A` | abrir e fechar a ajuda na tela |
 | `Ctrl+Alt+H` | esconder o overlay |
+
+Você não precisa decorar: `Ctrl+Alt+A` mostra tudo isso dentro do jogo, junto com o significado
+de cada cor.
 
 **As suas marcações ficam salvas.** Ao reabrir a mesma partida, elas voltam junto com as da IA — e é
 comparando as duas que se aprende mais: onde a IA marcou crítico e você não sentiu nada é ponto

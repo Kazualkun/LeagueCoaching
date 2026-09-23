@@ -547,6 +547,18 @@ jogo **já** mostra onde você está, e o nosso anel, interpolado entre frames d
 discordava visivelmente do ícone do próprio jogo. Overlay que contradiz o jogo perde a confiança de
 quem olha.
 
+#### A ajuda na tela
+
+Você não precisa decorar nada. **`Ctrl+Alt+A`** abre e fecha um painel com tudo — os atalhos, o que
+cada cor significa e como ler o minimapa:
+
+![O painel de ajuda do overlay](img/overlay-ajuda.jpg)
+
+Ele também aparece sozinho nos primeiros segundos, quando o overlay se conecta. Isso existe por um
+motivo específico: se você abre o replay do início e as marcações estão aos 12, 18 e 24 minutos, a
+tela fica — corretamente — vazia, e sem nada dizendo "estou aqui" a conclusão razoável é que não
+funcionou.
+
 #### Os atalhos
 
 Com a **janela do jogo na frente**:
@@ -559,6 +571,7 @@ Com a **janela do jogo na frente**:
 | `Ctrl+Alt+Q` | uma dúvida para rever depois |
 | `Ctrl+Alt+S` | pular para a **próxima** marcação (8 s antes dela) |
 | `Ctrl+Alt+R` | voltar para **onde você parou** da última vez |
+| `Ctrl+Alt+A` | abrir e fechar a ajuda na tela |
 | `Ctrl+Alt+H` | esconder o overlay |
 
 `Ctrl+Alt+S` transforma a revisão num passeio guiado: você percorre os seus erros em ordem, sem

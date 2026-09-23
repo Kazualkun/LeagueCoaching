@@ -72,6 +72,12 @@ class ProviderConfig:
     model_prefers: tuple[str, ...] = ()
     rate_limit: RateLimit | None = None
     latency_preference: LatencyClass | None = None
+    # O `strict` da OpenAI exige `additionalProperties: false` em todo objeto
+    # e todo campo em `required`. O schema que o pydantic gera nao e assim, e
+    # provedores que validam isso de verdade respondem 400. Quem recusa marca
+    # False aqui e continua com decodificacao guiada pelo schema, que ja
+    # entrega o que precisamos — a garantia final e a validacao no pydantic.
+    schema_strict: bool = True
     options: dict[str, Any] = field(default_factory=dict)
 
     def resolve_key(self) -> str | None:
@@ -145,15 +151,44 @@ def default_providers() -> list[ProviderConfig]:
             base_url="https://api.groq.com/openai/v1",
             cost_class="free_cloud",
             privacy="leaves_machine",
-            # Sem JSON_SCHEMA: o Groq oferece `json_object`, que promete "algum
-            # JSON" e nao o NOSSO JSON. A diferenca decide se o roteador confia
-            # na saida ou entra no loop de validar-e-reparar.
-            caps=frozenset({Capability.TEXT, Capability.JSON_OBJECT, Capability.LONG_CTX_32K}),
+            # O Groq PASSOU a ter `json_schema`, e isto foi conferido contra a
+            # API de verdade com o nosso proprio schema: `AnalystOutput`, com
+            # `$defs` e tudo, volta valido de primeira.
+            #
+            # A observacao antiga aqui dizia que ele so tinha `json_object`.
+            # Enquanto ela ficou desatualizada, o roteador pedia `json_object`
+            # — e o Groq responde 400 a isso quando a palavra "json" nao
+            # aparece nas mensagens. O 400 abria o disjuntor, e o usuario lia
+            # "nenhum provedor atende a tarefa", que era falso.
+            caps=frozenset(
+                {
+                    Capability.TEXT,
+                    Capability.JSON_SCHEMA,
+                    Capability.JSON_OBJECT,
+                    Capability.LONG_CTX_32K,
+                }
+            ),
+            # `strict` do jeito da OpenAI exige `additionalProperties: false`
+            # em TODO objeto e todo campo em `required` — o schema do pydantic
+            # nao e assim, e o Groq recusa com 400. Sem o strict ele continua
+            # decodificando guiado pelo schema; a garantia final continua sendo
+            # a validacao no pydantic, que ja existia.
+            schema_strict=False,
             ctx_tokens=32_768,
             api_key_name="groq",
             text_model="openai/gpt-oss-120b",
             model_prefers=("gpt-oss-120b", "gpt-oss", "llama", "instruct"),
-            rate_limit=RateLimit(requests=25, window_s=60.0),
+            # 8.000 TOKENS POR MINUTO — e o teto que mais aperta no tier
+            # gratuito, e nao o de requisicoes. Ele nao estava declarado, e
+            # por isso os quatro analistas saiam em paralelo, somavam ~16 mil
+            # tokens e levavam 429 no segundo. O 429 abria o disjuntor, e o
+            # usuario lia "nenhum provedor atende a tarefa" — tres camadas
+            # longe da verdade, que era so "espere tres segundos".
+            #
+            # A conta inclui a SAIDA: o provedor reserva `max_tokens` ao
+            # aceitar a chamada, entao quem estima so a entrada subestima em
+            # mais de 2 mil.
+            rate_limit=RateLimit(requests=25, window_s=60.0, tokens=8_000),
             # O Groq e rapido o bastante para ser a escolha certa em tarefa
             # interativa mesmo quando existe um local disponivel.
             latency_preference="interactive",
