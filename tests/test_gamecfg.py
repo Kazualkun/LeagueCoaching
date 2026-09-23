@@ -204,3 +204,59 @@ async def test_the_guard_still_fails_closed_either_way(cfg_desligada: Path) -> N
     async with httpx.AsyncClient() as client:
         with pytest.raises(LiveGameRefused):
             await ReplayGuard(client).assert_replay_mode()
+
+
+# --------------------------------------------------------------------------
+# Patch do replay contra o patch instalado
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def instalacao(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Uma pasta do League com a forma da real: Config/game.cfg e Game/."""
+    raiz = tmp_path / "League of Legends"
+    (raiz / "Config").mkdir(parents=True)
+    (raiz / "Game").mkdir()
+    cfg = raiz / "Config" / "game.cfg"
+    cfg.write_text(CFG_REAL, encoding="utf-8")
+    monkeypatch.setenv("RIFTCOACH_GAME_CFG", str(cfg))
+    return raiz
+
+
+def _versao(raiz: Path, versao: str) -> None:
+    (raiz / "Game" / "compat-version-metadata.json").write_text(
+        f'{{\n    "version": "{versao}"\n}}\n', encoding="utf-8"
+    )
+
+
+def test_o_patch_instalado_sai_do_arquivo_de_versao_do_jogo(instalacao: Path) -> None:
+    """Valor copiado da instalacao real. O `CfgVersion` do mesmo game.cfg dizia
+    16.15 com o jogo ja no 16.19 — por isso ele nao serve para isto."""
+    _versao(instalacao, "16.19.8207193+branch.releases-16-19.code.public.content.release")
+    assert gamecfg.installed_patch() == "16.19"
+
+
+def test_partida_do_patch_anterior_explica_por_que_o_replay_nao_abre(instalacao: Path) -> None:
+    """O caso que chegou do usuario: o client registrou "Replay is incompatible
+    due to major-minor version mismatch: rofl=16.18 game=16.19", e o RiftCoach
+    mandava baixar o replay e dar play."""
+    _versao(instalacao, "16.19.8207193+branch.releases-16-19")
+    problema = gamecfg.replay_patch_mismatch("16.18")
+    assert problema is not None
+    assert "16.18" in problema and "16.19" in problema
+
+
+def test_partida_do_patch_atual_nao_gera_aviso(instalacao: Path) -> None:
+    _versao(instalacao, "16.19.8207193+branch.releases-16-19")
+    assert gamecfg.replay_patch_mismatch("16.19") is None
+
+
+@pytest.mark.parametrize("conteudo", [None, "nao e json", '{"outra": 1}', '{"version": "x.y"}'])
+def test_sem_versao_legivel_nao_ha_aviso(instalacao: Path, conteudo: str | None) -> None:
+    """Aviso chutado seria pior que nenhum: sem saber a versao, silencio."""
+    if conteudo is not None:
+        (instalacao / "Game" / "compat-version-metadata.json").write_text(
+            conteudo, encoding="utf-8"
+        )
+    assert gamecfg.installed_patch() is None
+    assert gamecfg.replay_patch_mismatch("16.18") is None

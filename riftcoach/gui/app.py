@@ -663,10 +663,17 @@ class App:
 
         def pronto(r: Resultado) -> None:
             if not r.dados:
+                from riftcoach.replay.gamecfg import replay_patch_mismatch
+
+                # Replay de patch anterior NAO abre, e mandar "baixe e de play"
+                # nesse caso manda a pessoa tentar uma coisa impossivel.
+                facts = getattr(self._preparado, "facts", None)
+                problema = replay_patch_mismatch(facts.patch) if facts is not None else None
                 self._aviso(
                     self.corpo,
                     "Não encontrei nenhum replay rodando.",
-                    "Abra o League, vá em Partidas, baixe o replay da partida e "
+                    problema
+                    or "Abra o League, vá em Partidas, baixe o replay da partida e "
                     "dê play. Depois clique em Abrir overlay de novo. "
                     "Importante: o jogo precisa estar em modo 'Sem bordas' — "
                     "em tela cheia exclusiva nada aparece por cima.",
@@ -688,7 +695,21 @@ class App:
             # processo novo, que e exatamente o que esta janela existe para
             # evitar.
             bandeiras = 0x08000000 if sys.platform == "win32" else 0
-            subprocess.Popen(cmd, creationflags=bandeiras)
+            # Sem console, tudo o que o overlay escreve — inclusive o erro que
+            # o derruba — ia para lugar nenhum. Num arquivo, ao menos da para
+            # abrir e ver por que ele sumiu. PYTHONIOENCODING porque, com a
+            # saida num arquivo, o filho escreveria em cp1252 e um caractere
+            # fora dele derrubaria o overlay por causa do proprio log.
+            from riftcoach.config import data_dir
+
+            with (data_dir() / "overlay.log").open("w", encoding="utf-8") as saida:
+                subprocess.Popen(
+                    cmd,
+                    creationflags=bandeiras,
+                    stdout=saida,
+                    stderr=subprocess.STDOUT,
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                )
             self._dizer("overlay aberto — CLIQUE na janela do League para vê-lo", SUCESSO)
 
         self._tarefa(conferir, pronto)

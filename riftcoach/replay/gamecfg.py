@@ -20,6 +20,7 @@ vivo.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -145,6 +146,52 @@ def replay_api_status() -> tuple[bool | None, str]:
         f"  {cfg.path}\n\n"
         f"  {REPLAY_API_KEY}=1\n\n"
         f"Depois reabra o replay. Ou rode: riftcoach enable-replay-api"
+    )
+
+
+def installed_patch() -> str | None:
+    """O patch do jogo instalado, em major.minor ("16.19"). None se nao der.
+
+    Lido de `Game/compat-version-metadata.json`, que o instalador da Riot
+    mantem ao lado da pasta `Config` do game.cfg. `CfgVersion`, dentro do
+    proprio game.cfg, NAO serve: ele guarda a versao em que o arquivo foi
+    gravado pela ultima vez, que fica para tras depois de uma atualizacao.
+    """
+    cfg = find_game_cfg()
+    if cfg is None:
+        return None
+    arquivo = cfg.parent.parent / "Game" / "compat-version-metadata.json"
+    try:
+        versao = json.loads(arquivo.read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    # "16.19.8207193+branch.releases-16-19..." -> "16.19"
+    partes = str(versao).split("+")[0].split(".")
+    if len(partes) < 2 or not (partes[0].isdigit() and partes[1].isdigit()):
+        return None
+    return f"{int(partes[0])}.{int(partes[1])}"
+
+
+def replay_patch_mismatch(match_patch: str) -> str | None:
+    """Por que o replay desta partida nao abre, ou None se nada impede.
+
+    O client da Riot recusa replay de outro patch — o log dele diz "Replay is
+    incompatible due to major-minor version mismatch" e o botao de assistir
+    some. Nao ha contorno: depois de uma atualizacao, os replays do patch
+    anterior deixam de abrir. Sem este aviso, quem analisou uma partida da
+    semana passada fica esperando um replay que nunca vai rodar, com uma
+    mensagem mandando "baixar o replay e dar play".
+
+    None tambem quando nao da para saber — sem o arquivo de versao, um aviso
+    chutado seria pior que nenhum.
+    """
+    instalado = installed_patch()
+    if instalado is None or not match_patch or instalado == match_patch:
+        return None
+    return (
+        f"esta partida e do patch {match_patch} e o seu League ja esta no "
+        f"{instalado}. O client da Riot nao abre replay de outro patch — nao ha "
+        "como assistir este. Escolha uma partida jogada depois da atualizacao."
     )
 
 

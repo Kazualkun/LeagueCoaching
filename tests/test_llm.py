@@ -882,6 +882,23 @@ def test_a_finding_anchored_outside_the_match_is_dropped() -> None:
     assert "fora da partida" in r.rejected[0]
 
 
+@pytest.mark.parametrize("ts", [0, 2, 9, 999])
+def test_a_finding_anchored_in_the_first_second_is_dropped(ts: int) -> None:
+    """Visto numa revisao real: o modelo pos 2 e 9 em `timestamp_ms` (minutos,
+    ou nada), e tres marcacoes "criticas" apareceram no segundo zero do
+    replay, antes de o jogo comecar."""
+    r = to_findings(_saida(timestamp_ms=ts), duration_ms=2_000_000, source_label="macro")
+    assert r.findings == []
+    assert "milissegundo" in r.rejected[0]
+
+
+def test_the_schema_tells_the_model_the_unit() -> None:
+    """Os dados chegam em mm:ss e o campo pede ms. A unidade precisa estar no
+    schema que o modelo preenche, nao so no nome do campo."""
+    esquema = json.dumps(AnalystOutput.model_json_schema(), ensure_ascii=False)
+    assert "milissegundos" in esquema
+
+
 def test_one_bad_finding_does_not_discard_the_good_ones() -> None:
     """Um analista que produziu dois bons e um ruim entregou dois bons.
     Derrubar o passe inteiro jogaria trabalho valido fora e gastaria outra

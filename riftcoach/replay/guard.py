@@ -39,9 +39,11 @@ Ver COMPLIANCE.md e docs/03-vod-review.md, 3.4.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -386,3 +388,54 @@ async def is_replay_running() -> bool:
         return False
     finally:
         await client.aclose()
+
+
+# De quanto em quanto tempo `wait_for_replay` bate na porta. O jogo leva
+# dezenas de segundos para abrir um replay; dois segundos de atraso depois
+# disso ninguem percebe.
+WAIT_INTERVAL_S = 2.0
+
+# Quanto tempo, depois de a porta abrir, uma recusa ainda e tratada como "o
+# replay esta carregando" e nao como resposta. Nao foi medido contra o client:
+# e folga para a tela de carregamento na maquina de referencia (Intel HD
+# 4000), caso o servidor local suba antes de o replay existir.
+LOADING_GRACE_S = 90.0
+
+
+async def wait_for_replay(
+    interval_s: float = WAIT_INTERVAL_S, loading_grace_s: float = LOADING_GRACE_S
+) -> None:
+    """Espera ate um replay estar rodando. Sai com Ctrl+C.
+
+    Antes disto o overlay dizia "Procurando..." e falhava no mesmo instante
+    com "o client nao esta respondendo", jogando fora a analise que acabara
+    de fazer — porque quem roda o comando ainda nao deu play, e e normal.
+
+    Porta FECHADA e espera sem prazo: o jogo ainda nao abriu. Porta aberta sem
+    replay e espera so durante `loading_grace_s`, e depois a recusa propaga:
+    404 com o jogo aberto pode ser uma partida AO VIVO, e ficar batendo num
+    client assim e o que este modulo existe para nao fazer. Certificado que
+    nao confere propaga na hora — esperar nao muda a resposta.
+    """
+    porta_abriu_em: float | None = None
+    while True:
+        try:
+            client, guard = await open_guard()
+        except LiveGameRefused as e:
+            # `open_guard` so encadeia OSError (conexao recusada, timeout,
+            # TLS). O certificado errado chega sem causa — e nao e espera.
+            if not isinstance(e.__cause__, OSError):
+                raise
+            porta_abriu_em = None
+        else:
+            if porta_abriu_em is None:
+                porta_abriu_em = time.monotonic()
+            try:
+                await guard.assert_replay_mode()
+                return
+            except LiveGameRefused:
+                if time.monotonic() - porta_abriu_em >= loading_grace_s:
+                    raise
+            finally:
+                await client.aclose()
+        await asyncio.sleep(interval_s)

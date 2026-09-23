@@ -75,6 +75,17 @@ def load_prompt(name: str) -> str:
 # --------------------------------------------------------------------------
 
 
+# Os dados chegam ao modelo em mm:ss, e o campo pede milissegundos. Sem dizer
+# a unidade, ele escreveu 2 e 9 ali — e a marcacao "critica" apareceu no
+# segundo zero do replay, antes de qualquer coisa acontecer.
+_TIMESTAMP_MS = "milissegundos desde o inicio da partida: 14:10 e 850000"
+
+# Abaixo disto a ancora nao e um momento do jogo, e o modelo escrevendo
+# minutos (ou nada) no campo de milissegundos. Nenhuma decisao acontece no
+# primeiro segundo da partida.
+MENOR_ANCORA_MS = 1_000
+
+
 class AnalystEvidence(BaseModel):
     """Uma evidencia, como o modelo a escreve.
 
@@ -86,7 +97,7 @@ class AnalystEvidence(BaseModel):
     """
 
     tier: Literal["T1", "T2", "T3"]
-    timestamp_ms: int = Field(ge=0)
+    timestamp_ms: int = Field(ge=0, description=_TIMESTAMP_MS)
     statement: str = Field(min_length=1)
     assumption: str = Field(description="A premissa assumida. Deixe string vazia se tier for T1.")
 
@@ -94,7 +105,7 @@ class AnalystEvidence(BaseModel):
 class AnalystFinding(BaseModel):
     category: Category
     severity: int = Field(ge=1, le=5)
-    timestamp_ms: int = Field(ge=0)
+    timestamp_ms: int = Field(ge=0, description=_TIMESTAMP_MS)
     claim: str = Field(min_length=1)
     evidence: list[AnalystEvidence] = Field(min_length=1)
     fix: str = Field(min_length=1)
@@ -178,6 +189,14 @@ def to_findings(saida: AnalystOutput, duration_ms: int, source_label: str) -> Co
             # conferido no replay, entao ele nao e utilizavel mesmo que o texto
             # esteja certo.
             out.rejected.append(f"{source_label}: timestamp {f.timestamp_ms} fora da partida")
+            continue
+        if f.timestamp_ms < MENOR_ANCORA_MS:
+            # Mesmo BAD_ANCHOR, outra cara: converter "9" em 9:00 seria
+            # inventar o momento, e a marcacao no segundo zero do replay
+            # aponta para coisa nenhuma.
+            out.rejected.append(
+                f"{source_label}: timestamp {f.timestamp_ms} nao e milissegundo de partida"
+            )
             continue
 
         evidencias: list[Evidence] = []

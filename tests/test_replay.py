@@ -36,6 +36,7 @@ from riftcoach.replay.guard import (
     ReplayGuard,
     cert_path,
     is_replay_running,
+    wait_for_replay,
 )
 from riftcoach.replay.rofl import (
     RoflMeta,
@@ -227,6 +228,69 @@ async def test_is_replay_running_never_raises() -> None:
     e o valor conservador — e o unico lugar do projeto onde ela nao propaga."""
     respx.get(PLAYBACK).mock(return_value=httpx.Response(404))
     assert await is_replay_running() is False
+
+
+# --------------------------------------------------------------------------
+# Esperar o replay abrir
+# --------------------------------------------------------------------------
+
+
+def _porta_fechada_nas_primeiras(monkeypatch: pytest.MonkeyPatch, vezes: int) -> list[int]:
+    """A conferencia de certificado recusa conexao `vezes` vezes, como faz o
+    socket quando o jogo ainda nao abriu. Devolve o contador de tentativas."""
+    tentativas = [0]
+
+    def conferir() -> str:
+        tentativas[0] += 1
+        if tentativas[0] <= vezes:
+            raise ConnectionRefusedError("porta fechada")
+        return "0" * 64
+
+    monkeypatch.setattr("riftcoach.replay.guard.assert_pinned_certificate", conferir)
+    return tentativas
+
+
+@respx.mock
+async def test_esperar_atravessa_a_porta_fechada_ate_o_replay_abrir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O que o "Procurando..." sempre prometeu. Antes, a primeira porta
+    fechada virava erro e a analise recem-feita ia para o lixo."""
+    tentativas = _porta_fechada_nas_primeiras(monkeypatch, 3)
+    respx.get(PLAYBACK).mock(return_value=httpx.Response(200, json=BOM))
+    await wait_for_replay(interval_s=0)
+    assert tentativas[0] == 4
+
+
+async def test_certificado_que_nao_confere_nao_vira_espera(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Esperar nao muda a resposta de um certificado errado. Tem de propagar."""
+
+    def recusar() -> str:
+        raise LiveGameRefused("o certificado do client nao confere")
+
+    monkeypatch.setattr("riftcoach.replay.guard.assert_pinned_certificate", recusar)
+    with pytest.raises(LiveGameRefused, match="certificado"):
+        await wait_for_replay(interval_s=0)
+
+
+@respx.mock
+async def test_404_com_o_jogo_aberto_recusa_depois_da_folga() -> None:
+    """Porta aberta sem replay pode ser partida AO VIVO. A folga cobre a tela
+    de carregamento; passada ela, a recusa propaga em vez de ficar batendo."""
+    rota = respx.get(PLAYBACK).mock(return_value=httpx.Response(404))
+    with pytest.raises(LiveGameRefused, match="404"):
+        await wait_for_replay(interval_s=0, loading_grace_s=0)
+    assert rota.call_count == 1
+
+
+@respx.mock
+async def test_replay_que_termina_de_carregar_dentro_da_folga_passa() -> None:
+    respx.get(PLAYBACK).mock(
+        side_effect=[httpx.Response(404), httpx.Response(404), httpx.Response(200, json=BOM)]
+    )
+    await wait_for_replay(interval_s=0, loading_grace_s=60)
 
 
 # --------------------------------------------------------------------------
