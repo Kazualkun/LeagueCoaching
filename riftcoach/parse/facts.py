@@ -72,6 +72,7 @@ class DeathContext(BaseModel):
     wave_proxy: WaveProxy  # T2
     gold_at_death: int  # morreu segurando ouro nao gasto?
     level_diff_vs_opponent: int
+    wards_placed_60s_before: int = 0
 
 
 class KillContext(BaseModel):
@@ -116,6 +117,7 @@ class ObjectiveEvent(BaseModel):
     focus_player_distance_u: int | None = None
     team_gold_diff_at: int
     wards_placed_60s_before: int  # SO contagem — a Riot nao da posicao de ward
+    focus_wave_proxy: WaveProxy = "UNKNOWN"
 
 
 class VisionSummary(BaseModel):

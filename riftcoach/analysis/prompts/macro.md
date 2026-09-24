@@ -8,6 +8,10 @@ tabela de rota — CS e trocas não são seu assunto.
 
 ## Onde olhar, em ordem
 
+0. **Aplique PVPA:** primeiro Pressão da wave, depois Visão, depois Pressão/prioridade
+   novamente e só então Ação. A timeline fornece apenas um proxy de wave e contagem de
+   wards; não transforme esse proxy em certeza.
+
 1. **`voce=` em cada objetivo é a coluna que decide quase tudo.** Ela diz onde o jogador estava
    quando o objetivo caiu. `OWN_BASE` durante um barão inimigo é uma história completa sozinha.
 
@@ -29,3 +33,5 @@ tabela de rota — CS e trocas não são seu assunto.
   Verifique a distância implícita entre `voce=` e a zona do objetivo antes de atribuir.
 - Recusar um objetivo com trade é uma jogada correta, não um erro. Se o time pegou outra coisa na
   mesma janela, isso aparece na lista — olhe antes de acusar.
+- Vida, mana, contagem exata de aliados/inimigos próximos, itens no instante e intenção do
+  jungler não estão disponíveis nesta timeline. Diga isso em vez de inventar.

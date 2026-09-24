@@ -237,7 +237,11 @@ def _objectives(f: MatchFacts) -> list[str]:
         if o.contested:
             bits.append("disputado")
         bits.append(f"voce={o.focus_player_zone}")
+        if o.focus_player_distance_u is not None:
+            bits.append(f"distancia={o.focus_player_distance_u}u")
         bits.append(f"ouro_time={o.team_gold_diff_at:+d}")
+        bits.append(f"wave={o.focus_wave_proxy}")
+        bits.append(f"smite_do_jogador={'sim' if 11 in f.summoners else 'nao'}")
         if o.wards_placed_60s_before:
             bits.append(f"suas_wards_60s={o.wards_placed_60s_before}")
         out.append(" ".join(bits))

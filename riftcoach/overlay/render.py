@@ -89,6 +89,31 @@ class OverlayWindow:
         # visivel, e a primeira chamada a `mostrar(True)` virava um no-op.
         self._visivel = False
 
+    def superficie_interativa(self, ligada: bool) -> None:
+        """Remove o buraco de cor enquanto o pincel precisa receber arrasto."""
+        if not self.vazado:
+            return
+        try:
+            if ligada:
+                # No modo pincel nao pode existir um "buraco" no fundo:
+                # qualquer pixel transparente deixa o clique atravessar para
+                # o League. A cor-chave e trocada por uma cor que nao aparece
+                # na superficie interativa; alpha 1 preserva a opacidade dos
+                # tracos, enquanto o fundo escuro avisa que o modo esta ativo.
+                self.root.attributes("-transparentcolor", "#010203")
+                self.root.configure(bg="#101820")
+                self.canvas.configure(bg="#101820")
+                self.root.attributes("-alpha", 1.0)
+            else:
+                self.root.attributes("-alpha", 1.0)
+                self.root.configure(bg=COR_TRANSPARENTE)
+                self.canvas.configure(bg=COR_TRANSPARENTE)
+                self.root.attributes("-transparentcolor", COR_TRANSPARENTE)
+        except tk.TclError:
+            # Algumas versões do Tk não aceitam remover transparentcolor.
+            # O modo click-through continua sendo restaurado pelo HWND.
+            pass
+
     @property
     def hwnd(self) -> int:
         """O identificador da janela, para quem precisa perguntar ao Windows
@@ -247,10 +272,23 @@ class OverlayWindow:
         if not self._hwnd:
             return
         win.set_click_through(self._hwnd, not ligado)
+        self.superficie_interativa(ligado)
         if not ligado:
-            for evento in ("<Button-1>", "<B1-Motion>", "<ButtonRelease-1>", "<Key>"):
+            for evento in (
+                "<Button-1>",
+                "<B1-Motion>",
+                "<ButtonRelease-1>",
+                "<Key>",
+                "<KeyPress>",
+            ):
                 self.canvas.unbind(evento)
                 self.root.unbind(evento)
+            self.root.unbind_all("<KeyPress>")
+            self.root.unbind_all("<Button-1>")
+            self.root.unbind_all("<B1-Motion>")
+            self.root.unbind_all("<ButtonRelease-1>")
+            with contextlib.suppress(tk.TclError):
+                self.canvas.grab_release()
             self.canvas.configure(cursor="")
             return
 
@@ -259,6 +297,7 @@ class OverlayWindow:
         self.root.attributes("-topmost", True)
         with contextlib.suppress(tk.TclError):
             self.root.focus_force()
+        win.activate(self._hwnd)
 
         def fracao(e: tk.Event[tk.Misc]) -> tuple[float, float]:
             larg = max(1, self.canvas.winfo_width())
@@ -266,13 +305,42 @@ class OverlayWindow:
             return e.x / larg, e.y / alt
 
         if ao_comecar is not None:
-            self.canvas.bind("<Button-1>", lambda e: ao_comecar(*fracao(e)))
+            def comecar(e: tk.Event[tk.Misc]) -> str:
+                self.canvas.focus_set()
+                win.activate(self._hwnd)
+                with contextlib.suppress(tk.TclError):
+                    self.canvas.grab_set()
+                ao_comecar(*fracao(e))
+                return "break"
+
+            self.root.bind_all("<Button-1>", comecar, add="+")
         if ao_mover is not None:
-            self.canvas.bind("<B1-Motion>", lambda e: ao_mover(*fracao(e)))
+            self.root.bind_all(
+                "<B1-Motion>",
+                lambda e: (ao_mover(*fracao(e)), "break")[1],
+                add="+",
+            )
         if ao_soltar is not None:
-            self.canvas.bind("<ButtonRelease-1>", lambda _e: ao_soltar())
+            def soltar(e: tk.Event[tk.Misc]) -> str:
+                ao_soltar()
+                with contextlib.suppress(tk.TclError):
+                    self.canvas.grab_release()
+                return "break"
+
+            self.root.bind_all(
+                "<ButtonRelease-1>",
+                soltar,
+                add="+",
+            )
         if ao_teclar is not None:
-            self.root.bind("<Key>", lambda e: ao_teclar(e.keysym))
+            def teclar(e: tk.Event[tk.Misc]) -> str:
+                ao_teclar(e.keysym)
+                return "break"
+
+            # bind_all cobre o caso em que o Windows devolve o foco ao League
+            # depois do primeiro arrasto. O "break" impede C/Z/X de chegarem
+            # ao jogo.
+            self.root.bind_all("<KeyPress>", teclar, add="+")
 
     def modo_digitacao(
         self,
@@ -300,6 +368,7 @@ class OverlayWindow:
         self.root.attributes("-topmost", True)
         with contextlib.suppress(tk.TclError):
             self.root.focus_force()
+        win.activate(self._hwnd)
         if ao_digitar is not None:
             self.root.bind("<Key>", lambda e: ao_digitar(e.char or "", e.keysym))
 

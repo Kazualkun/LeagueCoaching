@@ -141,7 +141,11 @@ def open_session(
     rs = load_session(match_id, puuid) or ReviewSession(match_id=match_id, puuid=puuid)
     if report is not None and facts is not None:
         do_usuario = [m for m in rs.marks if m.author == "user"]
-        rs.marks = sorted(marks_from_report(report, facts) + do_usuario, key=lambda m: m.t_ms)
+        ai = [
+            m for m in marks_from_report(report, facts)
+            if (m.t_ms, m.text) not in rs.dismissed_ai
+        ]
+        rs.marks = sorted(ai + do_usuario, key=lambda m: m.t_ms)
         save_session(rs)
     return rs
 

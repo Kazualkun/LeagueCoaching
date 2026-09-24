@@ -143,6 +143,13 @@ def show_no_activate(hwnd: int) -> None:
         ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), SW_SHOWNOACTIVATE)
 
 
+def activate(hwnd: int) -> None:
+    """Torna o overlay a janela ativa durante desenho/digitacao."""
+    if disponivel():
+        u = ctypes.windll.user32
+        u.SetForegroundWindow(wintypes.HWND(hwnd))
+
+
 def hide(hwnd: int) -> None:
     if disponivel():
         ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), SW_HIDE)
@@ -182,3 +189,15 @@ def set_click_through(hwnd: int, atravessa: bool) -> None:
         else (atual | WS_EX_LAYERED | WS_EX_TOOLWINDOW) & ~passa_clique
     )
     u.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, novo)
+    # Recalcula a regiao de hit-test imediatamente. Sem o FRAMECHANGED,
+    # algumas versoes do Windows mantem a janela click-through ate o proximo
+    # redimensionamento, fazendo o primeiro desenho cair no jogo.
+    u.SetWindowPos(
+        wintypes.HWND(hwnd),
+        wintypes.HWND(0),
+        0,
+        0,
+        0,
+        0,
+        0x0001 | 0x0002 | 0x0004 | 0x0020,
+    )

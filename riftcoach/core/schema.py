@@ -181,6 +181,14 @@ class Stroke(BaseModel):
         return self
 
 
+class ReviewScreenshot(BaseModel):
+    """Print capturado no instante da revisão."""
+
+    t_ms: int = Field(ge=0)
+    path: str
+    status: str = "saved"
+
+
 class ReviewSession(BaseModel):
     """Estado persistente de uma revisao, para poder retomar de onde parou.
 
@@ -192,6 +200,8 @@ class ReviewSession(BaseModel):
     puuid: str
     marks: list[Mark] = Field(default_factory=list)
     strokes: list[Stroke] = Field(default_factory=list)
+    screenshots: list[ReviewScreenshot] = Field(default_factory=list)
+    dismissed_ai: list[tuple[int, str]] = Field(default_factory=list)
     last_position_ms: int = 0
     completed: bool = False
 

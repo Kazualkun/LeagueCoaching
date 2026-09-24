@@ -87,6 +87,13 @@ def montar_prompt(
     partes = [
         "=== DADOS DA PARTIDA ===",
         facts_render.render(facts, None, resolver).strip(),
+        (
+            "=== METODO PVPA ===\n"
+            "Para objetivos, raciocine nesta ordem: Pressao da wave -> Visao -> "
+            "Pressao/prioridade novamente -> Acao. Use apenas os sinais fornecidos. "
+            "Se vida, mana, itens no instante, contagem de aliados/inimigos ou "
+            "intencao do jungler nao constarem, diga que nao estao disponiveis."
+        ),
         _momento_em_foco(finding, momento_ms),
         "=== PERGUNTA DO JOGADOR ===",
         pergunta.strip(),

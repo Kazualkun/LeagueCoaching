@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Literal
 
-from riftcoach.core.schema import Mark, Stroke
+from riftcoach.core.schema import Mark, MarkKind, Stroke
 from riftcoach.overlay.atalhos import TODOS as ATALHOS
 from riftcoach.overlay.geometry import MinimapProjector, Rect, minimap_rect
 
@@ -173,8 +173,13 @@ class OverlayState:
     # parecer travado e especialmente ruim.
     modo_pergunta: bool = False
     texto_da_pergunta: str = ""
+    modo_anotacao: bool = False
+    texto_da_anotacao: str = ""
+    tipo_da_anotacao: MarkKind = "note"
     resposta: str = ""
     pensando: bool = False
+    notificacao: str = ""
+    notificacao_ate_ms: int = 0
 
     @property
     def u(self) -> float:
@@ -429,6 +434,28 @@ def _aviso(st: OverlayState, now_ms: int) -> list[Primitive]:
             size=0.014 * st.u,
             anchor="n",
         )
+    ]
+
+
+def _notificacao(st: OverlayState, now_ms: int) -> list[Primitive]:
+    if not st.notificacao or now_ms > st.notificacao_ate_ms:
+        return []
+    return [
+        Box(
+            Rect(st.width * 0.25, st.height * 0.08, st.width * 0.5, st.height * 0.07),
+            fill="#17202b",
+            outline="#58a6ff",
+            width=2.0,
+        ),
+        Label(
+            st.width / 2,
+            st.height * 0.115,
+            st.notificacao,
+            color=COR_TEXTO,
+            size=max(11.0, 0.018 * st.u),
+            bold=True,
+            anchor="center",
+        ),
     ]
 
 
@@ -815,6 +842,49 @@ def _painel_da_pergunta(st: OverlayState) -> list[Primitive]:
     return out
 
 
+def _painel_da_anotacao(st: OverlayState) -> list[Primitive]:
+    """A caixa para escrever uma anotacao no instante atual."""
+    u = st.u
+    fonte = max(9.0, 0.015 * u)
+    margem = 0.02 * st.width
+    larg_ch = max(30, int((st.width - 2 * margem) / (fonte * 0.64)) - 1)
+    titulo = {
+        "question": "DÚVIDA",
+        "error": "ERRO",
+        "good": "ACERTO",
+    }.get(st.tipo_da_anotacao, "ANOTAÇÃO")
+    dica = {
+        "question": "escreva a sua dúvida",
+        "error": "descreva o erro",
+        "good": "descreva o que você fez bem",
+    }.get(st.tipo_da_anotacao, "escreva o que você percebeu")
+    digitado = st.texto_da_anotacao or dica
+    cor_digitado = COR_TEXTO if st.texto_da_anotacao else COR_FRACO
+    if st.texto_da_anotacao:
+        digitado = f"{st.texto_da_anotacao[-larg_ch:]}▌"
+    alt = fonte * 4.0
+    y = st.height - alt
+    out: list[Primitive] = [
+        Box(Rect(0.0, y, float(st.width), alt), fill=COR_FUNDO, outline=COR_USUARIO, width=2.0),
+        Label(margem, y + fonte * 1.3, titulo, color=COR_USUARIO, size=fonte, bold=True),
+        Label(
+            margem + fonte * 10.0,
+            y + fonte * 1.3,
+            digitado,
+            color=cor_digitado,
+            size=fonte,
+        ),
+        Label(
+            margem,
+            y + fonte * 2.8,
+            "Enter salva · Esc cancela · Backspace apaga",
+            color=COR_FRACO,
+            size=fonte * 0.78,
+        ),
+    ]
+    return out
+
+
 def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
     """A cena inteira para este instante.
 
@@ -833,12 +903,15 @@ def build(st: OverlayState, now_ms: int, *, boas_vindas: bool = False) -> Scene:
         sc.add(*_barra_do_pincel(st))
     if st.modo_pergunta:
         sc.add(*_painel_da_pergunta(st))
+    if st.modo_anotacao:
+        sc.add(*_painel_da_anotacao(st))
     if boas_vindas:
         # Ele ocupa o lugar do cartao de erro, e por isso suprime os dois. Nos
         # primeiros segundos "o que e isto" importa mais que qualquer erro —
         # e empilhar os dois cobriria o jogo inteiro.
         sc.add(*_boas_vindas(st, now_ms))
         return sc
+    sc.add(*_notificacao(st, now_ms))
     m = ativa(st, now_ms) if st.show_card else None
     # O minimapa acompanha o cartao: os dois falam da MESMA jogada, e um sem o
     # outro vira enfeite — pontos no mapa sem explicacao, ou explicacao sem

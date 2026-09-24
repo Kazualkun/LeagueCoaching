@@ -21,8 +21,9 @@ from pydantic import BaseModel, Field
 
 from riftcoach.analysis.pergunta import LIMITE_DA_PERGUNTA, responder
 from riftcoach.analysis.report import AiTrace, analyze, analyze_with_ai, render_finding
+from riftcoach.config import data_dir
 from riftcoach.core.errors import LiveGameRefused, RiftCoachError
-from riftcoach.core.schema import CoachingReport
+from riftcoach.core.schema import CoachingReport, MarkKind, ReviewSession
 from riftcoach.knowledge.benchmarks import Benchmark, BenchmarkTable
 from riftcoach.knowledge.sync import PatchDB
 from riftcoach.parse.distill import distill, mmss
@@ -51,6 +52,7 @@ class Session:
     trace: AiTrace | None = None
     controller: ReplayController | None = None
     replay_path: Path | None = None
+    review: ReviewSession | None = None
 
     @property
     def ready(self) -> bool:
@@ -107,10 +109,39 @@ class Pergunta(BaseModel):
     finding: int | None = None
 
 
+class UserMark(BaseModel):
+    """Anotação escrita no relatório, ancorada no relógio da partida."""
+
+    t_ms: int = Field(ge=0)
+    kind: MarkKind = "note"
+    text: str = Field(min_length=1, max_length=600)
+    old_text: str | None = None
+
+
+class MarkDelete(BaseModel):
+    t_ms: int = Field(ge=0)
+    text: str | None = None
+    author: str = "user"
+
+
 def _report_payload(s: Session) -> dict[str, Any]:
     """O relatorio, no formato que a SPA consome."""
     assert s.facts is not None and s.report is not None
+    # O overlay roda em outro processo e grava a mesma revisao em disco.
+    # Recarregar aqui faz a pagina enxergar a marca sem reiniciar o servidor.
+    if s.review is not None:
+        from riftcoach.core.review import load_session
+
+        s.review = load_session(s.review.match_id, s.review.puuid) or s.review
     f, r = s.facts, s.report
+    findings = [
+        fi
+        for fi in r.ranked()
+        if not (
+            s.review is not None
+            and (fi.timestamp_ms, fi.claim) in s.review.dismissed_ai
+        )
+    ]
 
     return {
         "match_id": f.match_id,
@@ -153,7 +184,25 @@ def _report_payload(s: Session) -> dict[str, Any]:
                 ],
                 "text": "\n".join(render_finding(fi, i + 1)),
             }
-            for i, fi in enumerate(r.ranked())
+            for i, fi in enumerate(findings)
+        ],
+        "screenshots": [
+            {
+                "t_ms": p.t_ms,
+                "at": mmss(p.t_ms),
+                "path": f"/api/screenshots/{Path(p.path).name}",
+            }
+            for p in (s.review.screenshots if s.review is not None else [])
+        ],
+        "user_marks": [
+            {
+                "t_ms": m.t_ms,
+                "at": mmss(m.t_ms),
+                "kind": m.kind,
+                "text": m.text,
+            }
+            for m in (s.review.timeline() if s.review is not None else [])
+            if m.author == "user"
         ],
         "benchmarks": [
             {
@@ -172,6 +221,7 @@ def _report_payload(s: Session) -> dict[str, Any]:
         # A curva alimenta o grafico da linha do tempo. Uma amostra por minuto
         # basta para ver a forma; por segundo seria ruido e peso.
         "advantage": _advantage_series(f),
+        "objective_review": _objective_review(f),
     }
 
 
@@ -182,6 +232,45 @@ def _advantage_series(f: MatchFacts) -> list[dict[str, float]]:
         {"minute": i, "wp": round(100 * e.win_probability, 1)}
         for i, e in enumerate(advantage_series(f))
     ]
+
+
+def _objective_review(f: MatchFacts) -> list[dict[str, Any]]:
+    """Checklist factual dos objetivos, sem transformar ausencia de dado em palpite."""
+    smite = 11 in f.summoners
+    out: list[dict[str, Any]] = []
+    for o in f.objectives:
+        if o.kind not in {"DRAGON", "BARON_NASHOR", "RIFTHERALD", "HORDE"}:
+            continue
+        if o.focus_player_distance_u is None:
+            luta = "distância não disponível"
+        elif o.focus_player_distance_u <= 2500:
+            luta = "você estava perto o bastante para contestar"
+        else:
+            luta = "você estava longe para contestar"
+        ouro = (
+            f"{o.team_gold_diff_at:+d} ouro para seu time"
+            if o.team_gold_diff_at
+            else "ouro empatado ou não disponível"
+        )
+        out.append(
+            {
+                "at": o.t,
+                "kind": o.kind,
+                "result": "seu time" if o.taken_by_focus_team else "inimigo",
+                "contest": luta,
+                "gold": ouro,
+                "vision": (
+                    f"{o.wards_placed_60s_before} ward sua nos 60s anteriores"
+                    if o.wards_placed_60s_before
+                    else "nenhuma ward sua nos 60s anteriores"
+                ),
+                "wave": o.focus_wave_proxy,
+                "smite": "seu jogador tinha Smite" if smite else "seu jogador não tinha Smite",
+                "numbers": "não disponível na timeline desta partida",
+                "jungler_intent": "não disponível na timeline desta partida",
+            }
+        )
+    return out
 
 
 def create_app() -> Any:
@@ -309,6 +398,130 @@ def create_app() -> Any:
             )
         return {"resposta": resposta.texto, "provedor": resposta.provedor}
 
+    @app.post("/api/marks")
+    async def add_mark(corpo: UserMark) -> Any:
+        """Salva uma anotação ou dúvida feita no relatório web."""
+        if not SESSION.ready or SESSION.facts is None:
+            raise HTTPException(status_code=404, detail="nenhuma partida analisada ainda")
+        if corpo.t_ms > SESSION.facts.duration_s * 1000:
+            raise HTTPException(status_code=422, detail="o horário está fora da partida")
+
+        from riftcoach.core.review import add_user_mark, load_session, open_session
+
+        review = load_session(SESSION.facts.match_id, SESSION.facts.focus.puuid)
+        if review is None:
+            review = SESSION.review or open_session(
+                SESSION.facts.match_id,
+                SESSION.facts.focus.puuid,
+                SESSION.report,
+                SESSION.facts,
+            )
+        mark = add_user_mark(review, corpo.t_ms, corpo.kind, corpo.text.strip())
+        SESSION.review = review
+        return {
+            "ok": True,
+            "mark": {
+                "t_ms": mark.t_ms,
+                "at": mmss(mark.t_ms),
+                "kind": mark.kind,
+                "text": mark.text,
+            },
+        }
+
+    @app.put("/api/marks")
+    async def edit_mark(corpo: UserMark) -> Any:
+        """Atualiza o texto de uma marca do jogador sem criar duplicata."""
+        if not SESSION.ready or SESSION.facts is None:
+            raise HTTPException(status_code=404, detail="nenhuma partida analisada ainda")
+        from riftcoach.core.review import load_session, save_session
+
+        review = load_session(SESSION.facts.match_id, SESSION.facts.focus.puuid) or SESSION.review
+        if review is None:
+            raise HTTPException(status_code=404, detail="revisão não encontrada")
+        candidatos = [
+            m
+            for m in review.marks
+            if m.author == "user"
+            and m.t_ms == corpo.t_ms
+            and (corpo.old_text is None or m.text == corpo.old_text)
+        ]
+        if not candidatos:
+            raise HTTPException(status_code=404, detail="marcação não encontrada")
+        mark = candidatos[0]
+        mark.text = corpo.text.strip()
+        mark.kind = corpo.kind
+        save_session(review)
+        SESSION.review = review
+        return {"ok": True}
+
+    @app.delete("/api/marks")
+    async def delete_mark(corpo: MarkDelete) -> Any:
+        if not SESSION.ready or SESSION.facts is None:
+            raise HTTPException(status_code=404, detail="nenhuma partida analisada ainda")
+        from riftcoach.core.review import load_session, save_session
+
+        review = load_session(SESSION.facts.match_id, SESSION.facts.focus.puuid) or SESSION.review
+        if review is None:
+            raise HTTPException(status_code=404, detail="revisão não encontrada")
+        antes = len(review.marks)
+        if corpo.author == "ai":
+            alvo = next(
+                (
+                    m for m in review.marks
+                    if m.author == "ai" and m.t_ms == corpo.t_ms
+                    and (corpo.text is None or m.text == corpo.text)
+                ),
+                None,
+            )
+            if alvo is None:
+                raise HTTPException(status_code=404, detail="marcação não encontrada")
+            review.dismissed_ai.append((alvo.t_ms, alvo.text))
+            review.marks.remove(alvo)
+        else:
+            review.marks = [
+                m for m in review.marks
+                if not (
+                    m.author == "user"
+                    and m.t_ms == corpo.t_ms
+                    and (corpo.text is None or m.text == corpo.text)
+                )
+            ]
+        if len(review.marks) == antes:
+            raise HTTPException(status_code=404, detail="marcação não encontrada")
+        save_session(review)
+        SESSION.review = review
+        return {"ok": True}
+
+    @app.get("/api/screenshots/{filename}")
+    async def get_screenshot(filename: str) -> Any:
+        """Serve apenas prints do diretorio local da aplicacao."""
+        if Path(filename).name != filename:
+            raise HTTPException(status_code=404, detail="print não encontrado")
+        path = data_dir() / "prints" / filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="print não encontrado")
+        return FileResponse(path)
+
+    @app.delete("/api/screenshots/{filename}")
+    async def delete_screenshot(filename: str) -> Any:
+        if Path(filename).name != filename or not SESSION.ready or SESSION.facts is None:
+            raise HTTPException(status_code=404, detail="print não encontrado")
+        from riftcoach.core.review import load_session, save_session
+
+        review = load_session(SESSION.facts.match_id, SESSION.facts.focus.puuid) or SESSION.review
+        if review is None:
+            raise HTTPException(status_code=404, detail="revisão não encontrada")
+        found = [p for p in review.screenshots if Path(p.path).name == filename]
+        if not found:
+            raise HTTPException(status_code=404, detail="print não encontrado")
+        review.screenshots = [p for p in review.screenshots if Path(p.path).name != filename]
+        path = data_dir() / "prints" / filename
+        if path.is_file():
+            path.unlink()
+        save_session(review)
+        SESSION.review = review
+        return {"ok": True}
+
     @app.get("/")
     async def index() -> Any:
         return FileResponse(STATIC_DIR / "index.html")
@@ -378,6 +591,9 @@ async def prepare_session(
     SESSION.benchmarks = marks
     SESSION.trace = trace
     SESSION.replay_path = find_replay(facts.match_id)
+    from riftcoach.core.review import open_session
+
+    SESSION.review = open_session(facts.match_id, puuid, report, facts)
     return SESSION
 
 
@@ -386,6 +602,7 @@ def adopt(
     report: CoachingReport,
     benchmarks: list[Benchmark] | None = None,
     trace: AiTrace | None = None,
+    review: ReviewSession | None = None,
 ) -> Session:
     """Entrega ao servidor uma analise que JA foi feita em outro lugar.
 
@@ -404,6 +621,7 @@ def adopt(
     SESSION.benchmarks = benchmarks or []
     SESSION.trace = trace
     SESSION.replay_path = find_replay(facts.match_id)
+    SESSION.review = review
     return SESSION
 
 

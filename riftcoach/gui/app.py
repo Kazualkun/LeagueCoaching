@@ -23,6 +23,8 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
+import time
+from urllib.parse import urlencode
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -57,7 +59,7 @@ def _abrir_portal() -> None:
 
 PORTA_WEB = 8770
 
-LARGURA, ALTURA = 680, 690
+LARGURA, ALTURA = 800, 780
 
 PASSOS = ("Chave", "Conta", "Partida", "Revisar")
 
@@ -87,7 +89,8 @@ class App:
         self.root = tk.Tk()
         self.root.title("RiftCoach AI")
         self.root.configure(bg=FUNDO)
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self.root.minsize(760, 700)
         centralizar(self.root, LARGURA, ALTURA)
 
         self.estado = Estado()
@@ -97,6 +100,7 @@ class App:
         # sem refazer nada.
         self._preparado: Any = None
         self._servidor_no_ar = False
+        self._porta_web: int | None = None
         # Id do bind de <FocusIn> que fareja a chave na area de transferencia
         # em tela_chave(). Guardado aqui para poder desligar o bind antigo
         # antes de criar outro — sem isso, cada vez que a Riot recusa uma
@@ -453,18 +457,58 @@ class App:
     def tela_partida(self) -> None:
         self._limpar()
         self._marcar_passo(2)
-        titulo(self.corpo, "Analisando a sua última partida").pack(anchor="w")
+        titulo(self.corpo, "Escolha a partida").pack(anchor="w")
         paragrafo(
             self.corpo,
-            f"Conta: {self.estado.riot_id}  ·  região: {self.estado.plataforma}",
+            f"Conta: {self.estado.riot_id}  ·  região: {self.estado.plataforma}\n"
+            "Você pode escolher Solo/Duo ou Flex, inclusive uma partida que não seja a última.",
         ).pack(anchor="w", pady=(6, 0))
+        Botao(
+            self.corpo,
+            "Selecionar outro jogador/conta",
+            self.tela_conta,
+            principal=False,
+        ).pack(anchor="w", pady=(10, 0))
+
+        area = tk.Frame(self.corpo, bg=FUNDO_CARTAO, padx=18, pady=16)
+        area.pack(fill="x", pady=(18, 0))
+        tk.Label(area, text="Partidas recentes", bg=FUNDO_CARTAO, fg=TEXTO,
+                 font=fonte(10, negrito=True)).pack(anchor="w")
+        lista = tk.Listbox(area, height=7, width=78, bg=FUNDO, fg=TEXTO,
+                           selectbackground=BORDA, relief="flat", highlightthickness=0)
+        lista.pack(fill="x", pady=(8, 8))
+        status = tk.Label(area, text="Aguarde, buscando suas partidas...",
+                          bg=FUNDO_CARTAO, fg=TEXTO_FRACO, font=fonte(9))
+        status.pack(anchor="w")
+        filtros = tk.Frame(area, bg=FUNDO_CARTAO)
+        filtros.pack(anchor="w", pady=(8, 0))
+        filtro = tk.StringVar(value="todas")
+        candidatos: list[dict[str, Any]] = []
+        for valor, texto in (("todas", "Todas"), ("solo", "Solo/Duo"), ("flex", "Flex")):
+            tk.Radiobutton(filtros, text=texto, value=valor, variable=filtro,
+                           command=lambda: preencher(), bg=FUNDO_CARTAO, fg=TEXTO,
+                           selectcolor=FUNDO, activebackground=FUNDO_CARTAO,
+                           activeforeground=TEXTO).pack(side="left", padx=(0, 10))
+
+        def visiveis() -> list[dict[str, Any]]:
+            if filtro.get() == "todas":
+                return candidatos
+            return [c for c in candidatos if c["fila"] == filtro.get()]
+
+        def preencher() -> None:
+            lista.delete(0, tk.END)
+            for c in visiveis():
+                lista.insert(tk.END, c["texto"])
+
+        botao = Botao(area, "Gerar relatório desta partida", lambda: iniciar())
+        botao.pack(anchor="w", pady=(10, 0))
 
         cartao = tk.Frame(self.corpo, bg=FUNDO_CARTAO, padx=18, pady=16)
-        cartao.pack(fill="x", pady=(18, 0))
+        cartao.pack(fill="x", pady=(12, 0))
         linhas: dict[str, tk.Label] = {}
         for chave, texto in (
             ("dados", "Baixando nomes de itens e runas"),
-            ("partida", "Procurando a sua última partida"),
+            ("partida", "Baixando a partida escolhida"),
             ("analise", "Medindo onde a partida virou"),
         ):
             ln = tk.Label(
@@ -484,15 +528,34 @@ class App:
             atual = linhas[chave].cget("text")[4:]
             linhas[chave].configure(text=f" {marca} {atual}", fg=cor)
 
-        self._dizer("isso pode levar um minuto na primeira vez")
-        andar("dados", "fazendo")
-
         rid = self.estado.riot_id
 
-        async def trabalhar() -> Any:
-            from riftcoach.overlay.prepare import preparar
-
-            return await preparar(rid, last=1, use_ai=True)
+        async def buscar() -> list[dict[str, Any]]:
+            from riftcoach.riot.client import RiotClient
+            nome, _, tag = rid.partition("#")
+            async with RiotClient() as rc:
+                conta = await rc.account_by_riot_id(nome.strip(), tag.strip())
+                ids = await rc.match_ids(conta["puuid"], count=20)
+                import asyncio as _asyncio
+                partidas = await _asyncio.gather(*(rc.match(mid) for mid in ids))
+            out = []
+            for mid, partida in zip(ids, partidas, strict=True):
+                info = partida.get("info", {})
+                fila_id = info.get("queueId")
+                if fila_id not in (420, 440):
+                    continue
+                participante = next(
+                    (p for p in info.get("participants", []) if p.get("puuid") == conta["puuid"]),
+                    {},
+                )
+                fila = "solo" if fila_id == 420 else "flex"
+                data = info.get("gameStartTimestamp", 0)
+                quando = time.strftime("%d/%m %H:%M", time.localtime(data / 1000)) if data else "data?"
+                resultado = "vitória" if participante.get("win") else "derrota"
+                out.append({"id": mid, "fila": fila,
+                            "texto": f"{quando} · {'Solo/Duo' if fila == 'solo' else 'Flex'} · "
+                                     f"{participante.get('championName', '?')} · {resultado}"})
+            return out
 
         def pronto(r: Resultado) -> None:
             if not r.ok:
@@ -513,7 +576,63 @@ class App:
             )
             self.root.after(400, self.tela_pronto)
 
-        self._tarefa(trabalhar, pronto)
+        self._dizer("aguarde, buscando suas partidas...")
+
+        def partidas_prontas(r: Resultado) -> None:
+            if not r.ok:
+                status.configure(text=f"Não consegui buscar partidas: {r.erro}", fg=ERRO)
+                return
+            candidatos.extend(r.dados)
+            preencher()
+            status.configure(text=f"{len(candidatos)} partidas Solo/Duo/Flex encontradas.")
+            botao.habilitar(True)
+
+        botao.habilitar(False)
+        self._tarefa(buscar, partidas_prontas)
+
+        def iniciar() -> None:
+            vis = visiveis()
+            sel = lista.curselection()
+            if not sel or sel[0] >= len(vis):
+                self._dizer("selecione uma partida antes de gerar o relatório", ALERTA)
+                return
+            escolhido = vis[sel[0]]
+            botao.habilitar(False)
+            self._dizer("aguarde, estamos gerando seu relatório...")
+            andar("dados", "fazendo")
+            progresso = {"ativo": True, "indice": 0}
+            mensagens = (
+                "aguarde, baixando os dados completos da partida...",
+                "aguarde, calculando mortes, objetivos, wave e visão...",
+                "aguarde, gerando os achados determinísticos...",
+                "aguarde, a IA está comparando macro, economia e lutas...",
+                "aguarde, validando e montando o relatório final...",
+            )
+
+            def atualizar_progresso() -> None:
+                if not progresso["ativo"]:
+                    return
+                self._dizer(mensagens[progresso["indice"] % len(mensagens)])
+                progresso["indice"] += 1
+                self.root.after(2500, atualizar_progresso)
+
+            atualizar_progresso()
+
+            async def trabalhar() -> Any:
+                from riftcoach.overlay.prepare import preparar
+                return await preparar(rid, match_id=escolhido["id"], use_ai=True)
+
+            def terminou(resultado: Resultado) -> None:
+                progresso["ativo"] = False
+                if resultado.ok:
+                    andar("dados", "ok")
+                    andar("partida", "ok")
+                    andar("analise", "ok")
+                else:
+                    andar("analise", "erro")
+                pronto(resultado)
+
+            self._tarefa(trabalhar, terminou)
 
     # ------------------------------------------------------------------
     # Passo 4 — o que fazer com o resultado
@@ -589,7 +708,7 @@ class App:
         from riftcoach.api.app import adopt, esta_no_ar, serve
 
         if self._preparado is None:
-            self._dizer("analise ainda nao terminou", ALERTA)
+            self._dizer("aguarde, estamos gerando seu relatório...", ALERTA)
             return
 
         # ENTREGAR A ANALISE AO SERVIDOR. Sem esta linha a pagina abre e a SPA
@@ -599,15 +718,27 @@ class App:
             self._preparado.facts,
             self._preparado.report,
             self._preparado.benchmarks,
+            review=getattr(self._preparado, "session", None),
         )
         self._dizer("abrindo o relatório no navegador...")
 
         if not self._servidor_no_ar:
+            if esta_no_ar(PORTA_WEB):
+                self._dizer(
+                    "já existe um relatório aberto nesta sessão; feche a janela antiga "
+                    "e abra o relatório novamente",
+                    ERRO,
+                )
+                return
             self._servidor_no_ar = True
+            # Um unico servidor representa o relatorio atual. Criar outra
+            # porta deixava uma aba antiga viva e confundia a sessao.
+            porta = PORTA_WEB
+            self._porta_web = porta
 
             def subir_servidor() -> None:
                 try:
-                    serve(port=PORTA_WEB, open_browser=False)
+                    serve(port=porta, open_browser=False)
                 except BaseException as e:
                     # Todo erro daqui morria em silencio, e foi o que fez o
                     # botao "nao fazer nada" por tanto tempo: sob pythonw nao
@@ -618,8 +749,8 @@ class App:
                     # ligar na porta — em geral outro programa ja esta nela.
                     self._servidor_no_ar = False
                     msg = (
-                        f"a porta {PORTA_WEB} já está ocupada por outro "
-                        "programa — feche-o e tente de novo"
+                        f"a porta {porta} está ocupada por outro relatório — "
+                        "feche esse relatório antigo e tente de novo"
                         if isinstance(e, SystemExit)
                         else f"o servidor não subiu: {e}"
                     )
@@ -634,8 +765,10 @@ class App:
             servidor demora mais a subir, e onde abrir cedo demais mostra
             "nao foi possivel acessar o site".
             """
-            if esta_no_ar(PORTA_WEB):
-                webbrowser.open(f"http://127.0.0.1:{PORTA_WEB}/")
+            porta_atual = self._porta_web or PORTA_WEB
+            if esta_no_ar(porta_atual):
+                url = f"http://127.0.0.1:{porta_atual}/?{urlencode({'session': time.time_ns()})}"
+                webbrowser.open(url)
                 self._dizer("relatório aberto no navegador", SUCESSO)
             elif tentativas:
                 self.root.after(150, lambda: quando_subir(tentativas - 1))
@@ -654,12 +787,20 @@ class App:
         """
         import subprocess
 
-        self._dizer("procurando um replay aberto no client do League...")
+        self._dizer("aguarde, estamos gerando o overlay...")
 
         async def conferir() -> bool:
+            # O client pode levar alguns segundos entre abrir a janela do
+            # replay e publicar /replay/playback. Uma unica sonda transforma
+            # esse estado normal de carregamento em um falso "nao encontrei".
             from riftcoach.replay.guard import is_replay_running
 
-            return await is_replay_running()
+            for tentativa in range(45):
+                if await is_replay_running():
+                    return True
+                if tentativa < 44:
+                    await asyncio.sleep(2.0)
+            return False
 
         def pronto(r: Resultado) -> None:
             if not r.dados:

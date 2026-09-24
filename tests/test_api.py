@@ -28,6 +28,8 @@ from fastapi.testclient import TestClient
 
 from riftcoach.analysis.report import analyze
 from riftcoach.api import app as api
+from riftcoach.core.review import add_user_mark
+from riftcoach.core.schema import ReviewSession
 from riftcoach.knowledge.benchmarks import BenchmarkTable
 from riftcoach.parse.distill import distill
 from riftcoach.parse.facts import MatchFacts
@@ -51,6 +53,7 @@ def client(garen: MatchFacts) -> Any:
     api.SESSION.benchmarks = BenchmarkTable(patch=garen.patch).evaluate(garen)
     api.SESSION.trace = None
     api.SESSION.replay_path = None
+    api.SESSION.review = None
     return TestClient(api.create_app())
 
 
@@ -60,6 +63,7 @@ def empty_client() -> Any:
     api.SESSION.report = None
     api.SESSION.benchmarks = []
     api.SESSION.replay_path = None
+    api.SESSION.review = None
     return TestClient(api.create_app())
 
 
@@ -86,6 +90,32 @@ def test_the_report_carries_every_evidence_tier_and_assumption(client: Any) -> N
     assert viu_derivada, "o payload nunca exercitou o caminho de evidencia derivada"
 
 
+def test_the_report_carries_user_annotations(client: Any, garen: MatchFacts) -> None:
+    review = ReviewSession(match_id=garen.match_id, puuid=garen.focus.puuid)
+    add_user_mark(review, 61_000, "note", "observei a wave")
+    add_user_mark(review, 122_000, "question", "por que eu recuei?")
+    api.SESSION.review = review
+
+    marks = client.get("/api/report").json()["user_marks"]
+
+    assert [(m["kind"], m["at"], m["text"]) for m in marks] == [
+        ("note", "1:01", "observei a wave"),
+        ("question", "2:02", "por que eu recuei?"),
+    ]
+
+
+def test_web_mark_is_saved_to_the_review(client: Any, garen: MatchFacts) -> None:
+    response = client.post(
+        "/api/marks",
+        json={"t_ms": 61_000, "kind": "question", "text": "por que eu recuei?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mark"]["at"] == "1:01"
+    assert api.SESSION.review is not None
+    assert any(m.text == "por que eu recuei?" for m in api.SESSION.review.marks)
+
+
 def test_the_seek_anchor_travels_to_the_ui(client: Any) -> None:
     """O erro e a decisao, nao o desfecho: a tela precisa do ponto de seek, nao
     so do timestamp do evento."""
@@ -108,6 +138,16 @@ def test_the_advantage_curve_is_one_point_per_minute(client: Any, garen: MatchFa
     d = client.get("/api/report").json()
     assert len(d["advantage"]) == len(garen.team_gold_diff_series)
     assert all(0 <= p["wp"] <= 100 for p in d["advantage"])
+
+
+def test_the_report_exposes_objective_checklist(client: Any) -> None:
+    data = client.get("/api/report").json()
+    assert "objective_review" in data
+    for objective in data["objective_review"]:
+        assert "contest" in objective
+        assert "wave" in objective
+        assert "numbers" in objective
+        assert "jungler_intent" in objective
 
 
 def test_benchmarks_carry_their_provenance(client: Any) -> None:

@@ -323,6 +323,9 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
 
     # ---- mortes e abates ----------------------------------------------
     monster_kills = tl.of_type("ELITE_MONSTER_KILL")
+    ward_times = [
+        e["timestamp"] for e in tl.of_type("WARD_PLACED") if _valid_pid(e.get("creatorId")) == fid
+    ]
     deaths: list[DeathContext] = []
     kills: list[KillContext] = []
     for e in tl.of_type("CHAMPION_KILL"):
@@ -372,6 +375,9 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
                     level_diff_vs_opponent=(
                         (pf.get("level", 0) - opp_pf.get("level", 0)) if pf and opp_pf else 0
                     ),
+                    wards_placed_60s_before=sum(
+                        1 for w in ward_times if 0 <= t_ms - w <= 60_000
+                    ),
                 )
             )
         elif killer == fid or fid in assists:
@@ -414,9 +420,6 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
     recalls = _detect_recalls(tl, fid, team_id, deaths, purchases)
 
     # ---- objetivos -----------------------------------------------------
-    ward_times = [
-        e["timestamp"] for e in tl.of_type("WARD_PLACED") if _valid_pid(e.get("creatorId")) == fid
-    ]
     objectives: list[ObjectiveEvent] = []
     # (instante, x, y) — precisamos da posicao para julgar disputa de verdade.
     kill_points: list[tuple[int, int, int]] = [
@@ -481,6 +484,7 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
                 if gold_diff_series
                 else 0,
                 wards_placed_60s_before=sum(1 for w in ward_times if 0 <= t_ms - w <= 60_000),
+                focus_wave_proxy=_wave_proxy(tl, fid, t_ms, team_id),
             )
         )
 

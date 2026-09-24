@@ -103,6 +103,34 @@ class EvidencePacket:
     def _benchmark_block(self) -> str:
         return summarize_benchmarks(self.benchmarks).strip()
 
+    def _pvpa_block(self) -> str:
+        """Checklist de macro que orienta o modelo sem inventar telemetria."""
+        linhas = [
+            "FRAMEWORK PVPA PARA DECISOES DE OBJETIVO:",
+            "  1. PRESSAO: a wave precisa estar empurrada ou estabilizada antes de sair.",
+            "  2. VISAO: depois da pressao, criar/limpar visao no caminho e no objetivo.",
+            "  3. PRESSAO: manter a prioridade; nao abandonar a wave sem motivo.",
+            "  4. ACAO: so entao lutar, invadir, fazer o objetivo, resetar ou rotacionar.",
+            "Use os sinais medidos abaixo. Nao trate PVPA como prova de intencao.",
+        ]
+        for o in self.facts.objectives:
+            if o.kind not in {"DRAGON", "BARON_NASHOR", "RIFTHERALD", "HORDE"}:
+                continue
+            distancia = (
+                f"{o.focus_player_distance_u}u do objetivo"
+                if o.focus_player_distance_u is not None
+                else "distancia nao disponivel"
+            )
+            smite = "sim" if 11 in self.facts.summoners else "nao"
+            linhas.append(
+                f"  {o.t} {o.kind}: wave={o.focus_wave_proxy}; {distancia}; "
+                f"ouro_time={o.team_gold_diff_at:+d}; "
+                f"suas_wards_60s={o.wards_placed_60s_before}; smite_do_jogador={smite}; "
+                "vida/mana, contagem exata de campeoes proximos, itens no instante e "
+                "intencao do jungler nao estao disponiveis nesta timeline."
+            )
+        return "\n".join(linhas)
+
     # ------------------------------------------------------------------
     # Montagem
     # ------------------------------------------------------------------
@@ -114,6 +142,7 @@ class EvidencePacket:
             self._measured_block(),
             self._benchmark_block() if analyst in ("laning", "economy") else "",
             self._patch_block() if analyst == "economy" else "",
+            self._pvpa_block() if analyst in ("macro", "fights") else "",
         ]
         return "\n\n".join(p for p in partes if p)
 
@@ -134,6 +163,7 @@ class EvidencePacket:
             self._measured_block(),
             self._benchmark_block(),
             self._patch_block(),
+            self._pvpa_block(),
         ]
         return "\n\n".join(p for p in partes if p)
 

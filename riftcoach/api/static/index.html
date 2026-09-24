@@ -109,6 +109,21 @@
   .finding[data-sev="5"] { border-left-color: var(--sev5); }
   .finding[data-sev="4"] { border-left-color: var(--sev4); }
   .finding[data-sev="3"] { border-left-color: var(--sev3); }
+  .finding.user-mark { border-left-width: 5px; }
+  .finding.user-mark.mark-note { border-left-color: #48b0d4; background: #132633; }
+  .finding.user-mark.mark-question { border-left-color: #b084e8; background: #211a30; }
+  .finding.user-mark.mark-error { border-left-color: #e05260; background: #301a21; }
+  .finding.user-mark.mark-critical { border-left-color: #ff4058; background: #3a151d; }
+  .finding.user-mark.mark-good { border-left-color: #45b37a; background: #142a25; }
+  .finding.user-mark.mark-objective { border-left-color: #c8a24a; background: #2b2517; }
+  .finding.user-mark.mark-print { border-left-color: #e0803f; background: #2d2018; }
+  .mark-kind { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .mark-kind.note { color: #48b0d4; }
+  .mark-kind.question { color: #b084e8; }
+  .mark-kind.error, .mark-kind.critical { color: #ff6675; }
+  .mark-kind.good { color: #45b37a; }
+  .mark-kind.objective { color: #c8a24a; }
+  .mark-kind.print { color: #e0803f; }
 
   .fhead {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -173,6 +188,7 @@
     border: 1px solid var(--line); border-radius: 3px;
     padding: 8px 11px; font-size: 13.5px; font-family: inherit;
   }
+  .voice-status { color: var(--ink-faint); font-size: 12px; margin-top: 6px; }
   .askrow input:focus { outline: none; border-color: var(--accent); }
   .askrow button {
     background: var(--accent); color: #07131b; border: 0; border-radius: 3px;
@@ -187,6 +203,35 @@
   }
   .answer.err { border-left-color: var(--sev4); color: var(--sev4); }
   .answer .who { display: block; margin-top: 8px; font-size: 11.5px; color: var(--ink-faint); }
+  .markbox { background: var(--surface); border: 1px solid var(--line); padding: 14px; border-radius: 4px; }
+  .markrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .markrow input, .markrow select {
+    background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 3px; padding: 8px 10px; font: inherit;
+  }
+  .markrow input[type="number"] { width: 130px; }
+  .markrow input[type="text"] { flex: 1; min-width: 240px; }
+  .markrow button { background: var(--accent); color: #07131b; border: 0; border-radius: 3px; padding: 8px 15px; font-weight: 600; cursor: pointer; }
+  .markmsg { color: var(--ink-dim); font-size: 12.5px; margin-top: 8px; }
+  .mark-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 11px; }
+  .exportbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+  .exportbar button { background: var(--surface); color: var(--accent); border: 1px solid #2e5f74;
+    border-radius: 3px; padding: 8px 13px; font: inherit; cursor: pointer; }
+  .exportbar button:hover { background: #16303c; }
+  .exportmsg { color: var(--ink-faint); font-size: 12px; align-self: center; }
+  @media print {
+    body { background: white; color: #111; padding: 0; }
+    header { background: white; border-bottom: 2px solid #222; margin-bottom: 16px; }
+    .wrap { max-width: none; padding: 0; }
+    .brand, .exportbar, #replaybox, button, .askbox, .seekmsg, .markbox,
+    .voice-status, .mark-legend { display: none !important; }
+    h2 { color: #333; border-bottom-color: #aaa; page-break-after: avoid; }
+    .finding, .brow, .note { background: white !important; color: #111 !important;
+      border-color: #555 !important; break-inside: avoid; }
+    .claim, .fix, .drill, .ev li, .bname, .bnum, .bsrc, .fhead, .cat,
+    .tier, .assumption { color: #111 !important; }
+    .curve { break-inside: avoid; }
+  }
 
   /* ---- benchmarks ---- */
   .bench { display: grid; gap: 8px; }
@@ -239,10 +284,16 @@ let REPORT = null;
 async function load() {
   const r = await fetch("/api/report");
   if (!r.ok) {
-    $("#head").innerHTML = '<div class="empty">Nenhuma partida analisada ainda.</div>';
+    let detalhe = "nenhuma partida analisada nesta sessão";
+    try { detalhe = (await r.json()).detail || detalhe; } catch {}
+    $("#head").innerHTML = `<div class="empty">Não consegui carregar este relatório.<br>
+      <small>${esc(detalhe)}. Feche esta aba antiga e abra o relatório pelo RiftCoach.</small></div>`;
     return;
   }
   REPORT = await r.json();
+  REPORT.user_marks = REPORT.user_marks || [];
+  REPORT.screenshots = REPORT.screenshots || [];
+  REPORT.objective_review = REPORT.objective_review || [];
   renderHead(); renderCurve(); renderBody(); checkReplay();
 }
 
@@ -262,8 +313,59 @@ function renderHead() {
     <div class="meta">
       <span>${esc(d.match_id)}</span><span>patch ${esc(d.patch)}</span>
       <span>${dur}</span><span>${esc(d.position)}</span>${ia}
+    </div>
+    <div class="exportbar">
+      <button onclick="salvarPDF()">Salvar relatório em PDF</button>
+      <button onclick="salvarImagem()">Salvar relatório como imagem</button>
+      <span class="exportmsg" id="exportmsg">O PDF inclui o relatório completo.</span>
     </div>`;
 }
+
+window.salvarPDF = function salvarPDF() {
+  window.print();
+};
+
+window.salvarImagem = async function salvarImagem() {
+  const status = $("#exportmsg");
+  const alvo = document.querySelector("body");
+  if (!alvo) return;
+  status.textContent = "gerando a imagem completa…";
+  const clone = alvo.cloneNode(true);
+  clone.querySelectorAll(".exportbar, #replaybox, button, .askbox, .markbox").forEach(e => e.remove());
+  clone.querySelectorAll("[id]").forEach(e => e.removeAttribute("id"));
+  clone.style.width = `${document.documentElement.scrollWidth}px`;
+  clone.style.background = "#0d1420";
+  const estilos = [...document.querySelectorAll("style")].map(e => e.outerHTML).join("");
+  const largura = Math.max(document.documentElement.scrollWidth, 980);
+  const altura = document.documentElement.scrollHeight;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${largura}" height="${altura}">
+    <foreignObject width="100%" height="100%">
+      <div xmlns="http://www.w3.org/1999/xhtml">${estilos}${clone.outerHTML}</div>
+    </foreignObject>
+  </svg>`;
+  const url = URL.createObjectURL(new Blob([svg], {type: "image/svg+xml"}));
+  try {
+    const imagem = new Image();
+    await new Promise((resolve, reject) => {
+      imagem.onload = resolve; imagem.onerror = reject; imagem.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = largura * 2; canvas.height = altura * 2;
+    const contexto = canvas.getContext("2d");
+    if (!contexto) throw new Error("canvas indisponível");
+    contexto.scale(2, 2);
+    contexto.drawImage(imagem, 0, 0);
+    const link = document.createElement("a");
+    link.download = `riftcoach-${REPORT.match_id}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+    status.textContent = "imagem salva.";
+  } catch {
+    status.textContent = "não foi possível gerar a imagem neste navegador; use o PDF.";
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+};
 
 // A curva e a espinha da pagina: ela mostra QUANDO a partida foi decidida, e
 // os marcadores ligam cada finding ao ponto da curva em que ele acontece.
@@ -312,6 +414,22 @@ function renderBody() {
   const d = REPORT;
   const top = d.findings.slice(0, 3), resto = d.findings.slice(3);
   let html = "";
+  html += `<h2>Suas marcações</h2>
+    <div class="markbox">
+      <div class="markrow">
+        <select id="markkind"><option value="note">Anotação</option><option value="question">Dúvida</option></select>
+        <input id="marktime" type="number" min="0" max="${Math.floor(d.duration_s)}" step="1" placeholder="tempo em segundos">
+        <input id="marktext" type="text" maxlength="600" placeholder="Escreva aqui o que percebeu ou quer entender">
+        <button onclick="salvarMarcacao()">Salvar</button>
+      </div>
+      <div class="mark-legend">
+        <span class="mark-kind note">Anotação</span>
+        <span class="mark-kind question">Dúvida</span>
+        <span class="mark-kind error">Erro</span>
+        <span class="mark-kind good">Acerto</span>
+      </div>
+      <div class="markmsg" id="markmsg">Escreva no relatório, não sobre o jogo. O tempo é em segundos desde o início da partida.</div>
+    </div>`;
   if (!d.findings.length) {
     html = `<div class="note">Nenhum erro acima do limiar nesta partida. Isso não quer
       dizer que ela foi perfeita — quer dizer que a telemetria sozinha não enxergou
@@ -329,6 +447,112 @@ function renderBody() {
         <span class="bsrc">${esc(b.source_label)}</span>
       </div>`).join("") + `</div>`;
   }
+  if (d.user_marks.length) {
+    html += `<div class="user-marks">` +
+      d.user_marks.map((m, i) => `
+        <article class="finding user-mark mark-${esc(m.kind)}">
+          <div class="fhead"><span class="cat mark-kind ${esc(m.kind)}">${esc({
+            question: "dúvida", error: "erro", critical: "erro crítico", good: "acerto",
+            note: "anotação"
+          }[m.kind] || "anotação")}</span>
+            <span>${esc(m.at)}</span></div>
+          <div class="claim">${esc(m.text)}</div>
+          <button class="ask" onclick="editarMarcacao(${i})">Editar texto</button>
+          <button class="ask" onclick="apagarMarcacao(${i})">Apagar</button>
+        </article>`).join("") + `</div>`;
+  }
+  if (d.objective_review.length) {
+    html += `<h2>Checklist dos objetivos</h2><div class="user-marks">` +
+      d.objective_review.map(o => `
+        <article class="finding user-mark mark-objective">
+          <div class="fhead"><span class="cat mark-kind objective">objetivo · ${esc(o.kind)}</span>
+            <span>${esc(o.at)} · ${esc(o.result)}</span></div>
+          <div class="claim">Pode lutar: ${esc(o.contest)} · ${esc(o.gold)}</div>
+          <div class="drill">Visão: ${esc(o.vision)} · Wave: ${esc(o.wave)} ·
+            ${esc(o.smite)} · Números: ${esc(o.numbers)} · Jungler: ${esc(o.jungler_intent)}</div>
+        </article>`).join("") + `</div>`;
+  }
+
+  window.salvarMarcacao = async function salvarMarcacao() {
+    const tipo = $("#markkind").value;
+    const tempo = Number($("#marktime").value);
+    const texto = $("#marktext").value.trim();
+    const msg = $("#markmsg");
+    if (!Number.isFinite(tempo) || tempo < 0 || !texto) {
+      msg.textContent = "Informe o tempo e escreva a anotação.";
+      return;
+    }
+    msg.textContent = "salvando…";
+    const r = await fetch("/api/marks", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ t_ms: Math.round(tempo * 1000), kind: tipo, text: texto }),
+    });
+    const data = await r.json();
+    if (!r.ok) { msg.textContent = data.detail || "não foi possível salvar"; return; }
+    REPORT.user_marks.push(data.mark);
+    $("#marktext").value = "";
+    msg.textContent = `${tipo === "question" ? "Dúvida" : "Anotação"} salva em ${data.mark.at}.`;
+    renderBody();
+  };
+  window.apagarFinding = async function apagarFinding(index, text, tMs) {
+    if (!window.confirm("Apagar esta marcação do overlay e do relatório?")) return;
+    const r = await fetch("/api/marks", {
+      method: "DELETE", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({t_ms: tMs, text, author: "ai"}),
+    });
+    if (!r.ok) {
+      const erro = await r.json().catch(() => ({}));
+      $("#markmsg").textContent = erro.detail || "não foi possível apagar a marcação";
+      return;
+    }
+    await load();
+  };
+  window.editarMarcacao = async function editarMarcacao(index) {
+    const mark = REPORT.user_marks[index];
+    if (!mark) return;
+    const texto = window.prompt("Texto da marcação:", mark.text);
+    if (texto === null || !texto.trim() || texto.trim() === mark.text) return;
+    const r = await fetch("/api/marks", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        t_ms: mark.t_ms, kind: mark.kind, text: texto.trim(), old_text: mark.text
+      }),
+    });
+    if (!r.ok) {
+      $("#markmsg").textContent = "não foi possível atualizar a marcação";
+      return;
+    }
+    mark.text = texto.trim();
+    renderBody();
+  };
+  window.apagarMarcacao = async function apagarMarcacao(index) {
+    const mark = REPORT.user_marks[index];
+    if (!mark || !window.confirm("Apagar esta marcação?")) return;
+    const r = await fetch("/api/marks", {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ t_ms: mark.t_ms, text: mark.text }),
+    });
+    if (!r.ok) return;
+    REPORT.user_marks.splice(index, 1);
+    renderBody();
+  };
+  if (d.screenshots.length) {
+    html += `<h2>Prints da revisão</h2><div class="user-marks">` +
+      d.screenshots.map((p, i) => `
+        <article class="finding user-mark mark-print">
+          <div class="fhead"><span class="cat mark-kind print">print</span><span>${esc(p.at)}</span></div>
+          <img src="${esc(p.path)}" alt="Print do replay em ${esc(p.at)}" style="max-width:100%">
+          <button class="ask" onclick="apagarPrint(${i})">Apagar print</button>
+        </article>`).join("") + `</div>`;
+  }
+  window.apagarPrint = async function apagarPrint(index) {
+    const print = REPORT.screenshots[index];
+    if (!print || !window.confirm("Apagar este print?")) return;
+    const r = await fetch(print.path, { method: "DELETE" });
+    if (!r.ok) return;
+    REPORT.screenshots.splice(index, 1);
+    renderBody();
+  };
   html += `<h2>Procedência</h2><div class="note">` + (d.used_ai
     ? `Modelos: <code>${esc(Object.keys(d.model_trace).join(", "))}</code>.
        ${d.validation ? esc(d.validation) + "." : ""}`
@@ -362,14 +586,19 @@ function card(f, isTop) {
       <button class="ask" onclick="abrirPergunta(${f.index})" id="a${f.index}">
         Perguntar sobre este momento
       </button>
+      <button class="ask" onclick="apagarFinding(${f.index}, ${JSON.stringify(f.claim)}, ${f.timestamp_ms})">
+        Apagar marcação
+      </button>
       <span class="seekmsg" id="m${f.index}"></span>
       <div class="askbox" id="q${f.index}">
         <div class="askrow">
           <input type="text" id="i${f.index}" maxlength="600"
                  placeholder="ex.: o que eu deveria ter feito aqui?"
                  onkeydown="if(event.key==='Enter')perguntar(${f.index})">
+          <button onclick="falarPergunta(${f.index})" id="v${f.index}">🎙 Falar</button>
           <button onclick="perguntar(${f.index})" id="s${f.index}">Perguntar</button>
         </div>
+        <div class="voice-status" id="vs${f.index}">Você também pode falar a dúvida no microfone.</div>
         <div id="r${f.index}"></div>
       </div>
     </article>`;
@@ -438,6 +667,43 @@ async function perguntar(i) {
       const dica = d.hint ? ` ${d.hint}` : "";
       alvo.innerHTML = `<div class="answer err">${esc(motivo)}${esc(dica)}</div>`;
     }
+
+    window.falarPergunta = function falarPergunta(i) {
+      const campo = document.getElementById("i" + i);
+      const status = document.getElementById("vs" + i);
+      const botao = document.getElementById("v" + i);
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Recognition) {
+        status.textContent = "Este navegador não oferece reconhecimento de voz. Digite a dúvida.";
+        return;
+      }
+      const reconhecimento = new Recognition();
+      reconhecimento.lang = "pt-BR";
+      reconhecimento.interimResults = false;
+      reconhecimento.continuous = false;
+      botao.disabled = true;
+      status.textContent = "Fale sua dúvida no microfone…";
+      reconhecimento.onresult = (evento) => {
+        const texto = evento.results[0][0].transcript;
+        campo.value = (campo.value ? campo.value + " " : "") + texto;
+        status.textContent = `Entendi: “${texto}”`;
+      };
+      reconhecimento.onerror = (evento) => {
+        const mensagens = {
+          "not-allowed": "O microfone foi bloqueado. Permita o acesso no navegador.",
+          "audio-capture": "Não encontrei um microfone disponível.",
+          "no-speech": "Não entendi nenhuma fala. Tente novamente ou digite.",
+        };
+        status.textContent = mensagens[evento.error] || "Não consegui ouvir. Digite a dúvida.";
+      };
+      reconhecimento.onend = () => { botao.disabled = false; };
+      try {
+        reconhecimento.start();
+      } catch {
+        botao.disabled = false;
+        status.textContent = "Não consegui iniciar o microfone. Digite a dúvida.";
+      }
+    };
   } catch {
     alvo.innerHTML = `<div class="answer err">o servidor não respondeu</div>`;
   } finally {
@@ -446,4 +712,9 @@ async function perguntar(i) {
 }
 
 load();
+// Marcações feitas no overlay são gravadas por outro processo. Atualizar a
+// lista periodicamente elimina a instrução antiga de recarregar manualmente.
+setInterval(() => {
+  if (!document.querySelector(":focus")) load();
+}, 2000);
 </script>

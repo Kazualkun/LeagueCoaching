@@ -24,14 +24,16 @@ from typing import Any
 
 from riftcoach.config import data_dir
 from riftcoach.core.errors import LiveGameRefused
-from riftcoach.core.review import add_user_mark, save_session
-from riftcoach.core.schema import ReviewSession
+from riftcoach.core.review import add_user_mark, load_session, save_session
+from riftcoach.core.schema import ReviewScreenshot, ReviewSession
 from riftcoach.overlay import window as win
 from riftcoach.overlay.atalhos import (
     POR_CODIGO,
     TODOS,
     VK_AJUDA,
+    VK_ANOTAR,
     VK_CONTROL,
+    VK_DUVIDA,
     VK_MENU,
     VK_OCULTAR,
     VK_PERGUNTAR,
@@ -151,6 +153,8 @@ async def executar(
     # rodando. Declarada antes do `try` porque o `finally` a cancela, e a
     # calibracao pode falhar antes de o laco existir.
     tarefa_da_pergunta: asyncio.Task[None] | None = None
+    tarefa_do_stroke: asyncio.Task[None] | None = None
+    tarefa_da_pausa: asyncio.Task[None] | None = None
     try:
         ctrl = ReplayController(guard)
         cal = await ctrl.calibrate()
@@ -194,22 +198,75 @@ async def executar(
         # aberta. Se o replay andar enquanto a pessoa digita, a resposta ainda
         # tem de falar do instante que ela estava olhando.
         instante_da_pergunta = 0
+        instante_da_anotacao = 0
+        ultima_sync_s = 0.0
 
         def ao_comecar(x: float, y: float) -> None:
+            # A faixa de cores fica no rodape. Como o canvas recebe os cliques
+            # agora, escolher uma cor por clique nao pode virar um traco curto
+            # no jogo. Os numeros continuam disponiveis como atalho.
+            if y >= 0.94:
+                indice = int((x - 0.12) / 0.019)
+                if 0 <= indice < 5 and prancheta.usar_cor(indice):
+                    return
             prancheta.comecar(x, y)
 
         def ao_mover(x: float, y: float) -> None:
             prancheta.mover(x, y)
 
         def ao_soltar() -> None:
+            nonlocal tarefa_do_stroke
             traco = prancheta.terminar(instante_do_pincel)
             if traco is None or rs is None:
                 prancheta.descartar()
                 return
+            # Primeiro atualiza a memoria e a tela. Gravar JSON no callback do
+            # mouse fazia o desenho sumir ate a escrita terminar.
             rs.strokes.append(traco)
-            save_session(rs)
+            st.strokes = rs.strokes_em(instante_do_pincel)
+            st.notificacao = "rabisco salvo no relatório"
+            st.notificacao_ate_ms = instante_do_pincel + 4_000
+            sessao = rs.model_copy(deep=True)
+            anterior = tarefa_do_stroke
+
+            async def persistir(
+                anterior_task: asyncio.Task[None] | None,
+            ) -> None:
+                if anterior_task is not None:
+                    with contextlib.suppress(Exception):
+                        await anterior_task
+                try:
+                    await asyncio.to_thread(save_session, sessao)
+                except (OSError, ValueError) as exc:
+                    log(f"erro ao salvar rabisco: {exc}")
+                    st.notificacao = "erro ao salvar rabisco"
+                    st.notificacao_ate_ms = instante_do_pincel + 4_000
+
+            tarefa_do_stroke = asyncio.create_task(persistir(anterior))
+
+        def persistir_sessao_sem_bloquear() -> None:
+            """Grava uma cópia sem bloquear os atalhos do pincel."""
+            nonlocal tarefa_do_stroke
+            sessao = rs.model_copy(deep=True) if rs is not None else None
+            if sessao is None:
+                return
+            anterior = tarefa_do_stroke
+
+            async def persistir(anterior_task: asyncio.Task[None] | None) -> None:
+                if anterior_task is not None:
+                    with contextlib.suppress(Exception):
+                        await anterior_task
+                try:
+                    await asyncio.to_thread(save_session, sessao)
+                except (OSError, ValueError) as exc:
+                    log(f"erro ao salvar alteracao do pincel: {exc}")
+                    st.notificacao = "erro ao salvar alteração do pincel"
+                    st.notificacao_ate_ms = instante_do_pincel + 4_000
+
+            tarefa_do_stroke = asyncio.create_task(persistir(anterior))
 
         caixa = CaixaDePergunta()
+        caixa_de_anotacao = CaixaDePergunta()
 
         async def _buscar_resposta(texto: str, instante_ms: int) -> None:
             assert perguntar is not None
@@ -236,8 +293,29 @@ async def executar(
             if overlay is not None:
                 overlay.modo_digitacao(False)
 
+        def fechar_anotacao() -> None:
+            st.modo_anotacao = False
+            caixa_de_anotacao.limpar()
+            st.texto_da_anotacao = ""
+            if overlay is not None:
+                overlay.modo_digitacao(False)
+
         def ao_digitar(char: str, keysym: str) -> None:
             nonlocal tarefa_da_pergunta
+            if st.modo_anotacao:
+                acao = caixa_de_anotacao.teclar(char, keysym)
+                if acao == "fechar":
+                    fechar_anotacao()
+                elif acao == "enviar":
+                    texto = caixa_de_anotacao.limpar()
+                    if texto and rs is not None:
+                        m = add_user_mark(rs, instante_da_anotacao, st.tipo_da_anotacao, texto)
+                        st.marks = sorted([*st.marks, m], key=lambda x: x.t_ms)
+                        res.marcas_do_usuario += 1
+                        log(f"anotacao salva em {_mmss(instante_da_anotacao)}")
+                    fechar_anotacao()
+                st.texto_da_anotacao = caixa_de_anotacao.texto
+                return
             acao = caixa.teclar(char, keysym)
             if acao == "fechar":
                 fechar_pergunta()
@@ -256,12 +334,23 @@ async def executar(
                 return
             if tecla.lower() == "z":
                 if apagar_ultimo(rs.strokes, instante_do_pincel) is not None:
-                    save_session(rs)
+                    st.strokes = rs.strokes_em(instante_do_pincel)
+                    st.notificacao = "último rabisco apagado"
+                    st.notificacao_ate_ms = instante_do_pincel + 4_000
+                    persistir_sessao_sem_bloquear()
             elif tecla.lower() == "c":
                 if limpar_instante(rs.strokes, instante_do_pincel):
-                    save_session(rs)
+                    st.strokes = rs.strokes_em(instante_do_pincel)
+                    st.notificacao = "rabiscos apagados deste instante"
+                    st.notificacao_ate_ms = instante_do_pincel + 4_000
+                    persistir_sessao_sem_bloquear()
+                else:
+                    st.notificacao = "não há rabiscos neste instante"
+                    st.notificacao_ate_ms = instante_do_pincel + 4_000
             elif tecla.lower() == "x":
                 prancheta.proxima_espessura()
+                st.notificacao = f"espessura: {prancheta.espessura:g}px"
+                st.notificacao_ate_ms = instante_do_pincel + 2_000
 
         while True:
             hwnd = win.find_league_window()
@@ -312,11 +401,21 @@ async def executar(
                 break
 
             agora_ms = cal.to_timeline_ms(pb.time)
+            # A pausa do client pode chegar alguns frames depois da requisicao.
+            # Enquanto o pincel esta ativo, a cena precisa continuar presa ao
+            # instante escolhido; caso contrario os marcadores do mapa parecem
+            # andar enquanto o jogador desenha.
+            if st.modo_desenho:
+                agora_ms = instante_do_pincel
             # Os desenhos deste instante. Com o pincel ligado o instante e o em
             # que ele foi ligado — senao o traco sairia de cena enquanto ainda
             # esta sendo feito.
             alvo_dos_tracos = instante_do_pincel if st.modo_desenho else agora_ms
-            if rs is not None:
+            if (
+                rs is not None
+                and not st.modo_desenho
+                and time.monotonic() - ultima_sync_s >= 2.0
+            ):
                 st.strokes = rs.strokes_em(alvo_dos_tracos)
             st.traco_em_andamento = prancheta.em_andamento
             st.cor_do_pincel = prancheta.cor
@@ -334,7 +433,9 @@ async def executar(
             if atalhos:
                 for vk in teclas.novas([a.vk for a in TODOS]):
                     atalho = POR_CODIGO[vk]
-                    if st.modo_pergunta and vk != VK_PERGUNTAR:
+                    if (st.modo_pergunta and vk != VK_PERGUNTAR) or (
+                        st.modo_anotacao and atalho.marca is None
+                    ):
                         # Digitando, so o atalho que fecha a caixa vale. No
                         # Windows, AltGr E Ctrl+Alt: no teclado ABNT2, AltGr+Q
                         # da "/" e AltGr+E da "°" — sem este filtro, escrever a
@@ -351,11 +452,9 @@ async def executar(
                         st.modo_desenho = not st.modo_desenho
                         if st.modo_desenho:
                             instante_do_pincel = agora_ms
-                            # PAUSA ANTES DE DESENHAR. Rabiscar sobre imagem em
-                            # movimento e rabiscar no lugar errado: quando o
-                            # circulo fecha, o campeao ja saiu de dentro dele.
-                            with contextlib.suppress(LiveGameRefused):
-                                await ctrl.pause()
+                            # Ativa a superficie antes da chamada ao client.
+                            # A API de pausa pode demorar; esperar aqui fazia
+                            # o pincel parecer travado ao ser aberto.
                             overlay.modo_desenho(
                                 True,
                                 ao_comecar=ao_comecar,
@@ -363,10 +462,18 @@ async def executar(
                                 ao_soltar=ao_soltar,
                                 ao_teclar=ao_teclar,
                             )
+                            async def pausar_replay() -> None:
+                                with contextlib.suppress(LiveGameRefused):
+                                    await ctrl.pause()
+
+                            tarefa_da_pausa = asyncio.create_task(pausar_replay())
                             log(f"pincel ligado em {_mmss(instante_do_pincel)}")
                         else:
                             prancheta.descartar()
                             overlay.modo_desenho(False)
+                            # Devolve o foco ao League depois que o pincel
+                            # voltou a ser click-through.
+                            win.activate(hwnd)
                             log("pincel desligado")
                     elif vk == VK_PERGUNTAR:
                         if perguntar is None:
@@ -395,13 +502,44 @@ async def executar(
                         else:
                             fechar_pergunta()
                             log("pergunta fechada")
+                    elif atalho.marca is not None:
+                        if st.modo_pergunta:
+                            continue
+                        st.modo_anotacao = not st.modo_anotacao
+                        if st.modo_anotacao:
+                            instante_da_anotacao = agora_ms
+                            st.tipo_da_anotacao = atalho.marca
+                            caixa_de_anotacao.limpar()
+                            st.texto_da_anotacao = ""
+                            with contextlib.suppress(LiveGameRefused):
+                                await ctrl.pause()
+                            overlay.modo_digitacao(True, ao_digitar=ao_digitar)
+                            log(f"anotacao aberta em {_mmss(instante_da_anotacao)}")
+                        else:
+                            fechar_anotacao()
+                            log("anotacao fechada")
                     elif vk == VK_PRINT:
-                        destino = _salvar_print(rect, st.match_id, agora_ms)
-                        log(
-                            f"print salvo em {destino}"
-                            if destino
-                            else "nao consegui salvar o print (falta a camada de imagem)"
+                        destino, erro = _salvar_print(rect, st.match_id, agora_ms)
+                        if destino and rs is not None:
+                            rs.screenshots.append(
+                                ReviewScreenshot(t_ms=agora_ms, path=destino)
+                            )
+                            try:
+                                save_session(rs)
+                            except (OSError, ValueError) as exc:
+                                rs.screenshots.pop()
+                                erro = str(exc) or "não foi possível atualizar o relatório"
+                                destino = None
+                        elif destino:
+                            erro = "sessão do relatório não está disponível"
+                        mensagem = (
+                            "print salvo no relatório"
+                            if destino and rs is not None
+                            else f"erro ao salvar print: {erro}"
                         )
+                        st.notificacao = mensagem
+                        st.notificacao_ate_ms = agora_ms + 4_000
+                        log(f"print salvo em {destino}" if destino else mensagem)
                     elif vk in (VK_RETOMAR, VK_SEGUINTE):
                         alvo = (
                             retomar_de if vk == VK_RETOMAR else _proxima_marca_depois(st, agora_ms)
@@ -410,16 +548,21 @@ async def executar(
                             log("nao ha para onde pular a partir daqui")
                             continue
                         await ctrl.seek_to_ms(alvo)
+                        # Depois de um seek o client pode reconstruir os dois
+                        # relógios com uma pequena diferença transitória.
+                        # Recalibrar aqui evita que todas as marcações
+                        # seguintes fiquem deslocadas pelo offset antigo.
+                        cal = await ctrl.calibrate()
                         log(f"pulando para {_mmss(alvo)}")
-                    elif rs is not None and atalho.marca is not None:
-                        m = add_user_mark(
-                            rs, agora_ms, atalho.marca, f"({atalho.rotulo}) marcado por voce"
-                        )
-                        st.marks = sorted([*st.marks, m], key=lambda x: x.t_ms)
-                        res.marcas_do_usuario += 1
-                        log(f"marcacao '{atalho.rotulo}' salva em {_mmss(agora_ms)}")
 
-            if rs is not None:
+            if rs is not None and not st.modo_desenho:
+                # O relatório web pode apagar marcações enquanto o replay
+                # continua aberto. Recarregar a sessão mantém os dois lados
+                # visualmente sincronizados.
+                atualizada = load_session(rs.match_id, rs.puuid)
+                if atualizada is not None:
+                    rs = atualizada
+                ultima_sync_s = time.monotonic()
                 # Gravar a posicao a cada quadro seria uma escrita em disco dez
                 # vezes por segundo. A cada ~10 s basta: o pior caso e a pessoa
                 # retomar 10 segundos antes de onde parou, que e onde ela
@@ -441,6 +584,12 @@ async def executar(
             tarefa_da_pergunta.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await tarefa_da_pergunta
+        if tarefa_do_stroke is not None and not tarefa_do_stroke.done():
+            with contextlib.suppress(Exception):
+                await tarefa_do_stroke
+        if tarefa_da_pausa is not None and not tarefa_da_pausa.done():
+            with contextlib.suppress(Exception):
+                await tarefa_da_pausa
         if overlay is not None:
             overlay.fechar()
         with contextlib.suppress(Exception):
@@ -559,7 +708,7 @@ async def demonstrar(segundos: float = 15.0, log: Callable[[str], None] = print)
     return res
 
 
-def _salvar_print(rect: Rect, match_id: str, t_ms: int) -> str | None:
+def _salvar_print(rect: Rect, match_id: str, t_ms: int) -> tuple[str | None, str]:
     """Fotografa a area do jogo, com o overlay por cima, e grava em disco.
 
     E o que o pedido chamou de "como um print": a jogada, o cartao do erro e o
@@ -573,15 +722,25 @@ def _salvar_print(rect: Rect, match_id: str, t_ms: int) -> str | None:
     try:
         from PIL import ImageGrab
     except ImportError:
-        return None
+        return None, "Pillow não está instalado"
 
     pasta = data_dir() / "prints"
     pasta.mkdir(parents=True, exist_ok=True)
-    nome = f"{match_id or 'partida'}_{t_ms // 60_000:02d}m{(t_ms // 1000) % 60:02d}s.png"
-    destino = pasta / nome
+    base = f"{match_id or 'partida'}_{t_ms // 60_000:02d}m{(t_ms // 1000) % 60:02d}s"
+    destino = pasta / f"{base}.png"
+    contador = 2
+    while destino.exists():
+        destino = pasta / f"{base}_{contador}.png"
+        contador += 1
     caixa = (int(rect.x), int(rect.y), int(rect.right), int(rect.bottom))
     try:
-        ImageGrab.grab(bbox=caixa).save(destino)
-    except (OSError, ValueError):
-        return None
-    return str(destino)
+        # `rect` e o retangulo da area cliente do League, ja convertido para
+        # coordenadas da tela. Nao usar all_screens: o print deve conter
+        # somente o jogo e o overlay, nunca a area virtual de outros monitores.
+        imagem = ImageGrab.grab(bbox=caixa, all_screens=False)
+        if imagem.width <= 0 or imagem.height <= 0:
+            return None, "a captura retornou uma imagem vazia"
+        imagem.save(destino, format="PNG")
+    except (OSError, ValueError, TypeError) as exc:
+        return None, str(exc) or "o Windows recusou a captura"
+    return str(destino), ""

@@ -564,6 +564,30 @@ def rule_objective_deaths(ctx: RuleContext) -> list[Finding]:
                 ),
             )
         )
+    avançado_sem_cobertura = "ENEMY" in pior.zone and pior.allies_within_2000u == 0
+    sem_visao_registrada = pior.wards_placed_60s_before == 0
+    if avançado_sem_cobertura:
+        ev.append(
+            _t2(
+                "morreu avançado sem aliados próximos para dar cobertura",
+                pior.t_ms,
+                assumption=(
+                    "a posição foi classificada como lado inimigo e não havia "
+                    "aliados no raio de 2.000 unidades no frame disponível"
+                ),
+            )
+        )
+    if sem_visao_registrada:
+        ev.append(
+            _t2(
+                "nenhuma ward sua foi registrada nos 60 segundos anteriores",
+                pior.t_ms,
+                assumption=(
+                    "a contagem de wards existe, mas a Riot não informa a posição "
+                    "delas; isso não prova que o local exato estava sem visão"
+                ),
+            )
+        )
 
     return [
         Finding(
@@ -573,7 +597,17 @@ def rule_objective_deaths(ctx: RuleContext) -> list[Finding]:
             timestamp_ms=pior.t_ms,
             claim=(
                 f"Voce morreu em {pior.t} com {pior.objective_window}"
-                + (f" — e isso aconteceu {len(perto)} vezes." if len(perto) >= 2 else ".")
+                + (
+                    + (
+                        " — avançado, sem visão própria registrada e sem cobertura do time"
+                        if sem_visao_registrada
+                        else " — avançado e sem cobertura do time"
+                    )
+                    if avançado_sem_cobertura
+                    else f" — e isso aconteceu {len(perto)} vezes."
+                    if len(perto) >= 2
+                    else "."
+                )
             ),
             evidence=ev,
             fix=(
