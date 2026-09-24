@@ -144,10 +144,136 @@ def show_no_activate(hwnd: int) -> None:
 
 
 def activate(hwnd: int) -> None:
-    """Torna o overlay a janela ativa durante desenho/digitacao."""
+    """Torna a janela a ativa (lousa do pincel, ou o League de volta).
+
+    O Windows recusa `SetForegroundWindow` de um processo que nao recebeu a
+    ultima entrada — e quem recebeu o Ctrl+Alt+D foi o League, nao o
+    overlay. Recusado, o teclado continuava no jogo: C e Z so funcionavam
+    depois do primeiro clique na lousa, e pareciam ignorados.
+
+    O caminho documentado para isso e ligar por um instante a fila de entrada
+    desta thread a da janela em primeiro plano. Nenhuma tecla e simulada.
+    """
+    if not disponivel():
+        return
+    u = ctypes.windll.user32
+    alvo = wintypes.HWND(hwnd)
+    if u.SetForegroundWindow(alvo) and int(u.GetForegroundWindow()) == hwnd:
+        return
+    frente = u.GetForegroundWindow()
+    fio_da_frente = int(u.GetWindowThreadProcessId(frente, None))
+    meu_fio = int(ctypes.windll.kernel32.GetCurrentThreadId())
+    ligado = False
+    if fio_da_frente and fio_da_frente != meu_fio:
+        ligado = bool(u.AttachThreadInput(meu_fio, fio_da_frente, True))
+    try:
+        u.BringWindowToTop(alvo)
+        u.SetForegroundWindow(alvo)
+    finally:
+        if ligado:
+            u.AttachThreadInput(meu_fio, fio_da_frente, False)
+
+
+HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+
+
+def raise_topmost(hwnd: int) -> None:
+    """Poe a janela no topo da pilha de 'sempre no topo', sem ativa-la.
+
+    O pincel usa duas janelas empilhadas — a lousa que recebe o mouse e, por
+    cima dela, o overlay que mostra o desenho. Entre janelas topmost vale a
+    ordem da ultima reafirmacao, entao o overlay precisa ser reafirmado DEPOIS
+    que a lousa aparece; senao a lousa, quase invisivel, cobre o traco.
+    """
     if disponivel():
-        u = ctypes.windll.user32
-        u.SetForegroundWindow(wintypes.HWND(hwnd))
+        ctypes.windll.user32.SetWindowPos(
+            wintypes.HWND(hwnd),
+            wintypes.HWND(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE,
+        )
+
+
+# --------------------------------------------------------------------------
+# Uma instancia so
+# --------------------------------------------------------------------------
+
+ERROR_ALREADY_EXISTS = 183
+WAIT_OBJECT_0 = 0x0
+WAIT_ABANDONED = 0x80
+NOME_DO_MUTEX = "Local\\RiftCoachOverlay"
+NOME_DO_PEDIDO = "Local\\RiftCoachOverlayFechar"
+
+
+class InstanciaUnica:
+    """Garante um overlay por vez — e o NOVO vence.
+
+    Dois overlays sobre o mesmo replay tratam cada atalho duas vezes: dois
+    pedidos de pausa, duas marcacoes, duas gravacoes disputando o mesmo
+    arquivo. O botao "Abrir overlay" da janela pode ser clicado de novo a
+    qualquer momento, entao isso nao e hipotetico.
+
+    Por que o novo vence, e nao o antigo: quem clica de novo quase sempre
+    quer o overlay que acabou de pedir (outra partida, ou o antigo sumiu da
+    tela). O novo sinaliza um evento com nome; o antigo confere o evento a
+    cada quadro, grava o que tem e sai. So entao o novo segue.
+    """
+
+    def __init__(self) -> None:
+        self._mutex = 0
+        self._pedido = 0
+        self.substituiu = False
+
+    def adquirir(self, espera_s: float = 5.0) -> bool:
+        """True quando este processo passou a ser o overlay. Fora do Windows,
+        sempre True — la nao ha overlay para disputar."""
+        if not disponivel():
+            return True
+        k = ctypes.windll.kernel32
+        k.CreateMutexW.restype = wintypes.HANDLE
+        k.CreateEventW.restype = wintypes.HANDLE
+        # Evento de reset manual: o antigo pode demorar alguns quadros para
+        # olhar, e um evento automatico poderia se apagar antes disso.
+        self._pedido = int(k.CreateEventW(None, True, False, NOME_DO_PEDIDO) or 0)
+        self._mutex = int(k.CreateMutexW(None, True, NOME_DO_MUTEX) or 0)
+        if not self._mutex:
+            return True  # sem mutex nao ha como coordenar; melhor abrir que travar
+        if k.GetLastError() != ERROR_ALREADY_EXISTS:
+            if self._pedido:
+                k.ResetEvent(wintypes.HANDLE(self._pedido))
+            return True
+        # Ja existe um overlay. Pede para ele sair e espera o mutex.
+        self.substituiu = True
+        if self._pedido:
+            k.SetEvent(wintypes.HANDLE(self._pedido))
+        r = int(k.WaitForSingleObject(wintypes.HANDLE(self._mutex), int(espera_s * 1000)))
+        if self._pedido:
+            k.ResetEvent(wintypes.HANDLE(self._pedido))
+        return r in (WAIT_OBJECT_0, WAIT_ABANDONED)
+
+    def pediram_para_sair(self) -> bool:
+        if not (disponivel() and self._pedido):
+            return False
+        r = int(ctypes.windll.kernel32.WaitForSingleObject(wintypes.HANDLE(self._pedido), 0))
+        return r == WAIT_OBJECT_0
+
+    def liberar(self) -> None:
+        if not disponivel():
+            return
+        k = ctypes.windll.kernel32
+        if self._mutex:
+            k.ReleaseMutex(wintypes.HANDLE(self._mutex))
+            k.CloseHandle(wintypes.HANDLE(self._mutex))
+            self._mutex = 0
+        if self._pedido:
+            k.CloseHandle(wintypes.HANDLE(self._pedido))
+            self._pedido = 0
 
 
 def hide(hwnd: int) -> None:

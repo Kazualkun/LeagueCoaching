@@ -167,9 +167,22 @@ class ReplayController:
         except LiveGameRefused:
             return
 
-    async def pause(self) -> None:
+    async def pause(self) -> bool:
+        """Pausa SEM mandar `time`. Devolve True se o replay estava rodando.
+
+        Mandar `time` junto — como esta funcao fazia — e um SEEK, mesmo que
+        para o instante atual: o client recarrega o ponto e re-simula ate
+        ele, e na tela isso aparece como um "leve play" a cada atalho. Pior
+        ainda com o replay andando: o tempo lido fica alguns quadros no
+        passado quando o POST chega, e o seek volta a imagem.
+
+        A API aceita corpo parcial; so o campo mandado muda.
+        """
         estado = await self.guard.assert_replay_mode()
-        await self.guard.post("/replay/playback", {"time": estado.time, "paused": True})
+        if estado.paused:
+            return False
+        await self.guard.post("/replay/playback", {"paused": True})
+        return True
 
     async def check_drift(self) -> float:
         """Reconfere o offset. Devolve a deriva medida, em segundos.

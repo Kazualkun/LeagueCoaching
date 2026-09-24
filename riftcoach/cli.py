@@ -429,6 +429,62 @@ def sync_match_patches() -> None:
     _run(main())
 
 
+@app.command("meta")
+def meta_cmd(
+    partidas: Annotated[
+        int, typer.Option("--partidas", "-n", help="Quantas partidas novas coletar")
+    ] = 300,
+    patch: Annotated[
+        str | None, typer.Option("--patch", help="ex.: 16.19. Padrao: o atual")
+    ] = None,
+    so_status: Annotated[
+        bool, typer.Option("--status", help="So mostrar o que ja foi coletado")
+    ] = False,
+) -> None:
+    """Coleta partidas ranqueadas dos melhores do servidor para as estatisticas.
+
+    E daqui que saem a taxa de vitoria do matchup, as runas e os itens mais
+    usados "pelos melhores" que o relatorio compara com os seus. Usa a SUA
+    chave da Riot: com a chave pessoal, ~45 partidas por minuto. Pode parar
+    com Ctrl+C a qualquer momento sem perder o que ja entrou.
+    """
+    from riftcoach.knowledge.coleta import coletar, semear_do_cache
+    from riftcoach.knowledge.meta import MetaDB
+
+    meta = MetaDB()
+
+    def mostrar() -> None:
+        total = meta.partidas()
+        console.print(f"[bold]{total}[/] partidas na base de estatisticas ({meta.path})")
+        for p, n in meta.por_patch()[:6]:
+            console.print(f"  patch {p}: {n}")
+
+    if so_status:
+        mostrar()
+        return
+
+    async def main() -> None:
+        async with RiotClient() as rc:
+            semeadas = await semear_do_cache(rc, meta)
+            if semeadas:
+                console.print(f"[dim]{semeadas} partidas do seu cache aproveitadas[/]")
+            novas = await coletar(
+                rc,
+                meta,
+                alvo=partidas,
+                patch=patch,
+                log=lambda m: console.print(f"  [dim]{m}[/]"),
+            )
+            console.print(f"[green]{novas} partidas novas coletadas.[/]")
+        mostrar()
+
+    try:
+        _run(main())
+    except KeyboardInterrupt:
+        console.print("[yellow]Interrompido — o que ja entrou foi guardado.[/]")
+        mostrar()
+
+
 @app.command("pin-cert")
 def pin_cert(
     yes: Annotated[

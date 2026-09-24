@@ -124,6 +124,15 @@ class MarkDelete(BaseModel):
     author: str = "user"
 
 
+_PAPEL = {
+    "TOP": "topo",
+    "JUNGLE": "caçador",
+    "MIDDLE": "meio",
+    "BOTTOM": "atirador",
+    "UTILITY": "suporte",
+}
+
+
 def _report_payload(s: Session) -> dict[str, Any]:
     """O relatorio, no formato que a SPA consome."""
     assert s.facts is not None and s.report is not None
@@ -137,10 +146,7 @@ def _report_payload(s: Session) -> dict[str, Any]:
     findings = [
         fi
         for fi in r.ranked()
-        if not (
-            s.review is not None
-            and (fi.timestamp_ms, fi.claim) in s.review.dismissed_ai
-        )
+        if not (s.review is not None and (fi.timestamp_ms, fi.claim) in s.review.dismissed_ai)
     ]
 
     return {
@@ -204,6 +210,7 @@ def _report_payload(s: Session) -> dict[str, Any]:
             for m in (s.review.timeline() if s.review is not None else [])
             if m.author == "user"
         ],
+        "role_label": _PAPEL.get(f.focus.position, f.focus.position),
         "benchmarks": [
             {
                 "metric": b.metric,
@@ -222,7 +229,24 @@ def _report_payload(s: Session) -> dict[str, Any]:
         # basta para ver a forma; por segundo seria ruido e peso.
         "advantage": _advantage_series(f),
         "objective_review": _objective_review(f),
+        "build": _build_payload(f),
     }
+
+
+def _build_payload(f: MatchFacts) -> dict[str, Any] | None:
+    """Build/runas/matchup/composicao contra a amostra do servidor.
+
+    Nunca derruba a pagina: sem banco de patch ou de estatisticas, a secao
+    simplesmente nao aparece.
+    """
+    try:
+        from riftcoach.analysis.build import analisar, para_pagina
+
+        db = PatchDB()
+        db.use_patch(f.patch)
+        return para_pagina(analisar(f, db))
+    except Exception:
+        return None
 
 
 def _advantage_series(f: MatchFacts) -> list[dict[str, float]]:
@@ -235,42 +259,22 @@ def _advantage_series(f: MatchFacts) -> list[dict[str, float]]:
 
 
 def _objective_review(f: MatchFacts) -> list[dict[str, Any]]:
-    """Checklist factual dos objetivos, sem transformar ausencia de dado em palpite."""
-    smite = 11 in f.summoners
-    out: list[dict[str, Any]] = []
-    for o in f.objectives:
-        if o.kind not in {"DRAGON", "BARON_NASHOR", "RIFTHERALD", "HORDE"}:
-            continue
-        if o.focus_player_distance_u is None:
-            luta = "distância não disponível"
-        elif o.focus_player_distance_u <= 2500:
-            luta = "você estava perto o bastante para contestar"
-        else:
-            luta = "você estava longe para contestar"
-        ouro = (
-            f"{o.team_gold_diff_at:+d} ouro para seu time"
-            if o.team_gold_diff_at
-            else "ouro empatado ou não disponível"
-        )
-        out.append(
-            {
-                "at": o.t,
-                "kind": o.kind,
-                "result": "seu time" if o.taken_by_focus_team else "inimigo",
-                "contest": luta,
-                "gold": ouro,
-                "vision": (
-                    f"{o.wards_placed_60s_before} ward sua nos 60s anteriores"
-                    if o.wards_placed_60s_before
-                    else "nenhuma ward sua nos 60s anteriores"
-                ),
-                "wave": o.focus_wave_proxy,
-                "smite": "seu jogador tinha Smite" if smite else "seu jogador não tinha Smite",
-                "numbers": "não disponível na timeline desta partida",
-                "jungler_intent": "não disponível na timeline desta partida",
-            }
-        )
-    return out
+    """Revisao dos objetivos epicos, pelo papel do jogador (analysis/objetivos.py)."""
+    from riftcoach.analysis.objetivos import revisar
+
+    return [
+        {
+            "t_ms": r.t_ms,
+            "at": r.t,
+            "name": r.nome,
+            "ours": r.seu_time,
+            "role_duty": r.papel,
+            "verdict": r.veredito,
+            "tone": r.tom,
+            "items": [{"label": i.rotulo, "text": i.texto, "tone": i.tom} for i in r.itens],
+        }
+        for r in revisar(f)
+    ]
 
 
 def create_app() -> Any:
@@ -360,6 +364,50 @@ def create_app() -> Any:
         finally:
             await client.aclose()
 
+    @app.post("/api/seek_at/{t_ms}")
+    async def seek_at(t_ms: int) -> Any:
+        """Pula o replay para um instante qualquer da partida.
+
+        Mesmo contrato de /api/seek, para o que nao e finding: as marcacoes da
+        pessoa e os objetivos do checklist. Sem isto elas eram as unicas coisas
+        da pagina que nao levavam ao replay.
+        """
+        if not SESSION.ready or SESSION.facts is None:
+            raise HTTPException(status_code=404, detail="nenhuma partida analisada")
+        if not 0 <= t_ms <= SESSION.facts.duration_s * 1000:
+            raise HTTPException(status_code=422, detail="instante fora da partida")
+        try:
+            client, guard = await open_guard()
+        except LiveGameRefused as e:
+            return JSONResponse(status_code=409, content={"error": e.message, "hint": e.hint})
+        try:
+            controller = ReplayController(guard)
+            alvo = await controller.seek_to_ms(t_ms)
+            return {"ok": True, "replay_time_s": round(alvo, 2), "at": mmss(max(0, t_ms - 8_000))}
+        except LiveGameRefused as e:
+            return JSONResponse(status_code=409, content={"error": e.message, "hint": e.hint})
+        finally:
+            await client.aclose()
+
+    @app.get("/api/review/version")
+    async def review_version() -> Any:
+        """Barato de proposito: a pagina pergunta isto a cada 2 s.
+
+        Antes ela baixava e redesenhava o relatorio INTEIRO nesse ritmo — o que
+        fechava caixas de pergunta abertas e apagava o que estava sendo digitado
+        sempre que o foco saia do campo. Agora so recarrega quando o overlay (ou
+        outra aba) de fato gravou alguma coisa.
+        """
+        if SESSION.facts is None:
+            return {"version": 0}
+        from riftcoach.core.review import session_path
+
+        try:
+            v = session_path(SESSION.facts.match_id, SESSION.facts.focus.puuid).stat().st_mtime_ns
+        except OSError:
+            v = 0
+        return {"version": v}
+
     @app.post("/api/perguntar")
     async def perguntar(corpo: Pergunta) -> Any:
         """Pergunta em texto sobre a partida aberta.
@@ -379,9 +427,7 @@ def create_app() -> Any:
         if corpo.finding is not None:
             ranqueados = SESSION.report.ranked()
             if not 0 <= corpo.finding < len(ranqueados):
-                raise HTTPException(
-                    status_code=404, detail=f"finding {corpo.finding} nao existe"
-                )
+                raise HTTPException(status_code=404, detail=f"finding {corpo.finding} nao existe")
             alvo = ranqueados[corpo.finding]
 
         db = PatchDB()
@@ -467,8 +513,10 @@ def create_app() -> Any:
         if corpo.author == "ai":
             alvo = next(
                 (
-                    m for m in review.marks
-                    if m.author == "ai" and m.t_ms == corpo.t_ms
+                    m
+                    for m in review.marks
+                    if m.author == "ai"
+                    and m.t_ms == corpo.t_ms
                     and (corpo.text is None or m.text == corpo.text)
                 ),
                 None,
@@ -479,7 +527,8 @@ def create_app() -> Any:
             review.marks.remove(alvo)
         else:
             review.marks = [
-                m for m in review.marks
+                m
+                for m in review.marks
                 if not (
                     m.author == "user"
                     and m.t_ms == corpo.t_ms

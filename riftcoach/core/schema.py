@@ -145,6 +145,9 @@ class Mark(BaseModel):
     # aproximado, e quem desenha precisa trata-lo como aproximado.
     where: tuple[float, float] | None = None
     you: tuple[float, float] | None = None
+    # Raio de duvida de `you`, em unidades de mundo (parse/posicoes.py). O
+    # minimapa desenha o circulo desse tamanho: area, nunca ponto.
+    you_err_u: float | None = None
 
     @property
     def seek_ms(self) -> int:

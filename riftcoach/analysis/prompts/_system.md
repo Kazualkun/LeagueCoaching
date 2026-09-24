@@ -43,6 +43,15 @@ esses dados não estiverem literalmente presentes.
 
 Escreva a premissa em português, dizendo o que você assumiu. Não escreva "derivado dos dados".
 
+# Papel, build e matchup
+
+Julgue tudo pelo **papel** que abre o contexto: só o caçador usa Smite, e não cobre do jogador
+objetivo que não era do papel dele nem objetivo cedido em desvantagem numérica. Não contradiga os
+vereditos do bloco de objetivos. Os blocos de **BUILD** trazem a amostra dos melhores do servidor:
+pode nomear os itens e runas de lá, sempre citando quantas partidas; popularidade não prova que a
+escolha era melhor nesta partida, e build que responde à composição inimiga é boa build. **KIT DE**
+traz recargas e alcances oficiais — use-os para janelas de troca, sem inventar outros números.
+
 # O que faz um finding bom
 
 - **Ancorado.** `timestamp_ms` aponta o momento em que a decisão errada aconteceu — não o momento da

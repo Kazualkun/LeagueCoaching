@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from riftcoach.core.errors import ParseError, PlayerNotInMatch
-from riftcoach.core.zones import MapZone, side_relative, to_zone
+from riftcoach.core.zones import MapZone, objetivo_legivel, side_relative, to_zone
 from riftcoach.parse.facts import (
     PARSER_VERSION,
     DeathContext,
@@ -29,11 +29,14 @@ from riftcoach.parse.facts import (
     LaneSnapshot,
     MatchFacts,
     ObjectiveEvent,
+    ObjectivePresence,
     PlayerSummary,
     RecallEvent,
+    TeamProfile,
     VisionSummary,
     WaveProxy,
 )
+from riftcoach.parse.posicoes import Posicoes
 
 SUMMONERS_RIFT = 11
 FRAME_MS = 60_000
@@ -153,6 +156,30 @@ def _summary(p: dict[str, Any]) -> PlayerSummary:
         vision_score=p.get("visionScore", 0),
         level=p.get("champLevel", 0),
         items=[p.get(f"item{i}", 0) for i in range(7)],
+        champion_id=int(p.get("championId", 0)),
+    )
+
+
+def _perfil(participants: list[dict[str, Any]], team_id: int) -> TeamProfile | None:
+    """Dano, cura e controle de um time, somados do match-v5."""
+    time = [p for p in participants if p["teamId"] == team_id]
+    fis = sum(int(p.get("physicalDamageDealtToChampions", 0)) for p in time)
+    mag = sum(int(p.get("magicDamageDealtToChampions", 0)) for p in time)
+    ver = sum(int(p.get("trueDamageDealtToChampions", 0)) for p in time)
+    total = fis + mag + ver
+    if not time or total <= 0:
+        return None
+    curas = sorted(
+        ((str(p.get("championName", "?")), int(p.get("totalHeal", 0))) for p in time),
+        key=lambda c: -c[1],
+    )
+    return TeamProfile(
+        physical_share=round(fis / total, 3),
+        magic_share=round(mag / total, 3),
+        true_share=round(ver / total, 3),
+        heal_total=sum(c for _, c in curas),
+        cc_seconds=sum(int(p.get("timeCCingOthers", 0)) for p in time),
+        top_healers=curas[:2],
     )
 
 
@@ -223,18 +250,35 @@ def _wave_proxy(tl: _Timeline, pid: int, t_ms: int, team_id: int) -> WaveProxy:
     return "HOLDING_MID"
 
 
-def _objective_window(t_ms: int, objectives: list[dict[str, Any]]) -> str | None:
-    """Havia um objetivo nascendo ou disponivel perto deste instante?
+def _objective_window(
+    t_ms: int, objectives: list[dict[str, Any]]
+) -> tuple[str, str | None, int] | None:
+    """Havia um objetivo caindo logo depois deste instante?
 
     Sem tracking de respawn exato (a Riot nao expoe timers), usamos o proximo
     objetivo REALMENTE tomado como ancora. E retrospectivo, mas e verdade
     medida: se um dragao caiu 38s depois da morte, o dragao estava em disputa.
+
+    Devolve (tipo, subtipo, segundos). Quem decide se isso importa para ESTE
+    jogador e a regra, que conhece o papel dele: a ADC nao responde pelo
+    Arauto do outro lado do mapa.
     """
     for e in objectives:
         delta = e["timestamp"] - t_ms
         if 0 <= delta <= 60_000:
-            kind = e.get("monsterType", "OBJETIVO")
-            return f"{kind}_EM_{delta // 1000}s"
+            return e.get("monsterType", "OBJETIVO"), e.get("monsterSubType"), delta // 1000
+    return None
+
+
+def _jungler(participants: list[dict[str, Any]], team_id: int) -> int | None:
+    """O jungler do time: pela posicao da Riot, ou por quem levou Smite."""
+    do_time = [p for p in participants if p["teamId"] == team_id]
+    for p in do_time:
+        if p.get("teamPosition") == "JUNGLE":
+            return int(p["participantId"])
+    for p in do_time:
+        if 11 in (p.get("summoner1Id"), p.get("summoner2Id")):
+            return int(p["participantId"])
     return None
 
 
@@ -260,6 +304,9 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
     fid = focus_raw["participantId"]
     team_id = focus_raw["teamId"]
     by_pid = {p["participantId"]: p for p in participants}
+    pos = Posicoes(timeline, {p["participantId"]: p["teamId"] for p in participants})
+    own_jg = _jungler(participants, team_id)
+    enemy_jg = _jungler(participants, 300 - team_id)
 
     opp_raw, opp_source = _find_opponent(focus_raw, participants, tl)
     oid = opp_raw["participantId"] if opp_raw else None
@@ -333,29 +380,33 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
         killer = _valid_pid(e.get("killerId"))
         victim = _valid_pid(e.get("victimId"))
         assists = [p for p in (_valid_pid(a) for a in e.get("assistingParticipantIds", [])) if p]
-        pos = e.get("position", {})
+        ponto = e.get("position", {})
         zone = (
-            side_relative(to_zone(pos["x"], pos["y"]), team_id)
-            if "x" in pos
+            side_relative(to_zone(ponto["x"], ponto["y"]), team_id)
+            if "x" in ponto
             else MapZone.UNKNOWN.value
         )
         swing = e.get("bounty", 0) + e.get("shutdownBounty", 0)
 
         if victim == fid:
             pf = tl.pframe(t_ms, fid)
+            # Aliados por perto NO INSTANTE da morte, pelas ancoras de evento,
+            # e nao pelo frame do minuto mais proximo, que podia ser de 30 s
+            # antes (ou depois) e contar um aliado que ja tinha ido embora.
             near = 0
-            if pf and "position" in pf:
-                for other_pid, other in tl.frame_at(t_ms)["participantFrames"].items():
-                    opid = int(other_pid)
-                    if opid == fid or by_pid.get(opid, {}).get("teamId") != team_id:
+            if "x" in ponto:
+                for opid, op in by_pid.items():
+                    if opid == fid or op.get("teamId") != team_id:
                         continue
-                    if "position" not in other:
-                        continue
-                    dx = other["position"]["x"] - pf["position"]["x"]
-                    dy = other["position"]["y"] - pf["position"]["y"]
-                    if dx * dx + dy * dy <= NEARBY_UNITS**2:
+                    est_aliado = pos.onde(opid, t_ms - 1)
+                    if (
+                        est_aliado is not None
+                        and est_aliado.confiavel
+                        and est_aliado.distancia(ponto["x"], ponto["y"]) <= NEARBY_UNITS
+                    ):
                         near += 1
             opp_pf = tl.pframe(t_ms, oid) if oid else None
+            janela = _objective_window(t_ms, monster_kills)
             deaths.append(
                 DeathContext(
                     n=len(deaths) + 1,
@@ -369,15 +420,21 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
                     ],
                     gold_swing=-swing,
                     allies_within_2000u=near,
-                    objective_window=_objective_window(t_ms, monster_kills),
+                    objective_window=(
+                        f"{objetivo_legivel(janela[0], janela[1])} caiu {janela[2]}s depois"
+                        if janela
+                        else None
+                    ),
+                    next_objective_kind=janela[0] if janela else None,
+                    next_objective_in_s=janela[2] if janela else None,
+                    allies_alive=len(pos.vivos(team_id, t_ms - 1)),
+                    enemies_alive=len(pos.vivos(300 - team_id, t_ms - 1)),
                     wave_proxy=_wave_proxy(tl, fid, t_ms, team_id),
                     gold_at_death=pf.get("currentGold", 0) if pf else 0,
                     level_diff_vs_opponent=(
                         (pf.get("level", 0) - opp_pf.get("level", 0)) if pf and opp_pf else 0
                     ),
-                    wards_placed_60s_before=sum(
-                        1 for w in ward_times if 0 <= t_ms - w <= 60_000
-                    ),
+                    wards_placed_60s_before=sum(1 for w in ward_times if 0 <= t_ms - w <= 60_000),
                 )
             )
         elif killer == fid or fid in assists:
@@ -441,9 +498,9 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
 
     for e in tl.of_type("ELITE_MONSTER_KILL", "BUILDING_KILL"):
         t_ms = e["timestamp"]
-        pos = e.get("position", {})
-        zone = to_zone(pos["x"], pos["y"]).value if "x" in pos else "?"
-        pf = tl.pframe(t_ms, fid)
+        ponto = e.get("position", {})
+        zone = to_zone(ponto["x"], ponto["y"]).value if "x" in ponto else "?"
+        est = pos.onde(fid, t_ms)
         if e["type"] == "ELITE_MONSTER_KILL":
             kind = e.get("monsterType", "?")
             subtype = e.get("monsterSubType")
@@ -453,6 +510,19 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
             subtype = e.get("towerType") or e.get("laneType")
             # teamId em BUILDING_KILL e o time DONO da construcao destruida.
             mine = e.get("teamId") != team_id
+        util = est is not None and est.confiavel and "x" in ponto
+        participou = pos.participou(fid, e)
+        tomador = team_id if mine else 300 - team_id
+        quem = [_valid_pid(e.get("killerId"))]
+        quem += [_valid_pid(a) for a in e.get("assistingParticipantIds") or []]
+        participantes = [
+            by_pid[p].get("championName", "?")
+            for p in quem
+            if p is not None and p in by_pid and by_pid[p]["teamId"] == tomador
+        ]
+        est_jg = pos.onde(enemy_jg, t_ms) if enemy_jg else None
+        visto = pos.visto_por_ultimo(fid, t_ms)
+        jg_util = est_jg is not None and est_jg.confiavel and "x" in ponto
         objectives.append(
             ObjectiveEvent(
                 t=mmss(t_ms),
@@ -460,22 +530,52 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
                 kind=kind,
                 subtype=subtype,
                 taken_by_focus_team=mine,
-                contested=_contested(t_ms, pos),
+                contested=_contested(t_ms, ponto),
                 zone=zone,
+                # Participou = estava la, por definicao: distancia zero. Sem
+                # participar, a estimativa so vale se o raio de duvida couber
+                # na pergunta (Estimativa.confiavel).
                 focus_player_distance_u=(
-                    round(
-                        (
-                            (pf["position"]["x"] - pos["x"]) ** 2
-                            + (pf["position"]["y"] - pos["y"]) ** 2
-                        )
-                        ** 0.5
+                    0
+                    if participou
+                    else round(est.distancia(ponto["x"], ponto["y"]))
+                    if util and est is not None
+                    else None
+                ),
+                presence=(
+                    ObjectivePresence(
+                        focus_participated=participou,
+                        focus_distance_err_u=(
+                            0 if participou else round(est.erro_u) if util and est else None
+                        ),
+                        focus_dead=bool(est and est.morto),
+                        focus_respawn_in_s=est.renasce_em_s if est and est.morto else None,
+                        focus_last_seen_zone=(
+                            side_relative(to_zone(visto.x, visto.y), team_id) if visto else None
+                        ),
+                        focus_last_seen_s_before=((t_ms - visto.t_ms) // 1000 if visto else None),
+                        allies_alive=len(pos.vivos(team_id, t_ms - 15_000)),
+                        enemies_alive=len(pos.vivos(300 - team_id, t_ms - 15_000)),
+                        participants=participantes,
+                        own_jungler_participated=(pos.participou(own_jg, e) if own_jg else None),
+                        enemy_jungler_participated=(
+                            pos.participou(enemy_jg, e) if enemy_jg else None
+                        ),
+                        enemy_jungler_distance_u=(
+                            round(est_jg.distancia(ponto["x"], ponto["y"]))
+                            if jg_util and est_jg is not None
+                            else None
+                        ),
+                        enemy_jungler_distance_err_u=(
+                            round(est_jg.erro_u) if jg_util and est_jg is not None else None
+                        ),
                     )
-                    if pf and "position" in pf and "x" in pos
+                    if e["type"] == "ELITE_MONSTER_KILL"
                     else None
                 ),
                 focus_player_zone=(
-                    side_relative(to_zone(pf["position"]["x"], pf["position"]["y"]), team_id)
-                    if pf and "position" in pf
+                    side_relative(to_zone(est.x, est.y), team_id)
+                    if util and est is not None
                     else "?"
                 ),
                 team_gold_diff_at=gold_diff_series[
@@ -548,6 +648,14 @@ def distill(match: dict[str, Any], timeline: dict[str, Any], puuid: str) -> Matc
             for sel in style.get("selections", [])
         ],
         summoners=(focus_raw.get("summoner1Id", 0), focus_raw.get("summoner2Id", 0)),
+        rune_styles=tuple(  # type: ignore[arg-type]
+            (
+                [int(s.get("style", 0)) for s in focus_raw.get("perks", {}).get("styles", [])]
+                + [0, 0]
+            )[:2]
+        ),
+        ally_profile=_perfil(participants, team_id),
+        enemy_profile=_perfil(participants, 300 - team_id),
     )
 
 

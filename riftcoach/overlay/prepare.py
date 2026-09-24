@@ -18,7 +18,7 @@ from riftcoach.core.review import load_session, open_session, save_session
 from riftcoach.core.schema import CoachingReport, ReviewSession
 from riftcoach.knowledge.benchmarks import Benchmark, BenchmarkTable
 from riftcoach.knowledge.sync import PatchDB
-from riftcoach.overlay.locais import local_do_evento, local_do_jogador
+from riftcoach.overlay.locais import local_do_evento
 from riftcoach.overlay.run import focus_track
 from riftcoach.overlay.scene import OverlayState
 from riftcoach.parse.distill import distill
@@ -100,7 +100,8 @@ async def preparar(
         sessao = open_session(facts.match_id, puuid, report, facts)
 
     trilha = focus_track(timeline, facts.focus.participant_id)
-    _dar_lugar(sessao, timeline, trilha)
+    times = {j.participant_id: j.team_id for j in (*facts.team, *facts.enemy)}
+    _dar_lugar(sessao, timeline, facts.focus.participant_id, times)
     marcas_de_referencia = BenchmarkTable(patch=facts.patch).evaluate(facts, None)
 
     st = OverlayState(
@@ -126,7 +127,8 @@ async def preparar(
 def _dar_lugar(
     sessao: ReviewSession,
     timeline: dict[str, Any],
-    trilha: list[tuple[int, float, float]],
+    participant_id: int,
+    times: dict[int, int],
 ) -> None:
     """Preenche `where` e `you` das marcacoes que ainda nao tem.
 
@@ -137,13 +139,22 @@ def _dar_lugar(
     Idempotente: marcacao que ja tem lugar nao e tocada. Assim a revisao
     guardada em disco nao perde posicao quando o formato da timeline mudar.
     """
+    from riftcoach.parse.posicoes import Posicoes
+
+    pos = Posicoes(timeline, times)
     mudou = False
     for m in sessao.marks:
         if m.where is None:
             m.where = local_do_evento(timeline, m.t_ms)
             mudou = mudou or m.where is not None
-        if m.you is None:
-            m.you = local_do_jogador(trilha, m.t_ms)
-            mudou = mudou or m.you is not None
+        # `you` e SEMPRE recalculado. A versao anterior interpolava entre
+        # frames de minuto e gravava o resultado; manter esses valores velhos
+        # manteria o "VOCE" no lugar errado para sempre nas revisoes antigas.
+        est = pos.onde(participant_id, m.t_ms)
+        novo = (est.x, est.y) if est is not None and est.confiavel else None
+        erro = round(est.erro_u) if est is not None and est.confiavel else None
+        if (m.you, m.you_err_u) != (novo, erro):
+            m.you, m.you_err_u = novo, erro
+            mudou = True
     if mudou:
         save_session(sessao)

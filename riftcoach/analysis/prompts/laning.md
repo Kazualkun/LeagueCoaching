@@ -23,6 +23,13 @@ objetivos nem lutas de time — eles não são seu assunto e outro analista est�
 4. **Mortes na fase de rota quase nunca são sobre o combo.** Veja `aliados=` e a zona. Morrer em
    `ENEMY_` com zero aliados por perto é um erro de mapa, não de mecânica.
 
+## Matchup
+
+Se o contexto trouxer a taxa de vitória do matchup e os **KITS** dos dois campeões, use-os: diga se o
+matchup é favorável ou difícil (com a amostra), e aponte uma janela de troca concreta a partir das
+recargas oficiais ("o E dele tem 12s de recarga: depois que ele usar, você troca"). Se a amostra for
+pequena, trate como tendência.
+
 ## Cuidados
 
 - **`wave=` é T2, sempre.** É derivado do ritmo de CS e da posição, e pode estar errado. Se um

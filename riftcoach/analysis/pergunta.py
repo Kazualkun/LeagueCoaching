@@ -30,10 +30,12 @@ from riftcoach.parse import render as facts_render
 from riftcoach.parse.distill import mmss
 from riftcoach.parse.facts import MatchFacts
 
-# Medido: contexto ~1.227 + prompt de sistema ~450 + pergunta. A estimativa
-# alimenta o limitador de cota, entao errar para mais e melhor que para menos:
-# subestimar faz o roteador mandar uma chamada que nao cabe e levar 429.
-CUSTO_ESTIMADO = 2_000
+# Medido (partida de 35 min, com build, kits e objetivos por papel): ~16,8 mil
+# caracteres de contexto + ~3,2 mil de sistema, perto de 5.500 tokens. A
+# estimativa alimenta o limitador de cota, entao errar para mais e melhor que
+# para menos: subestimar faz o roteador mandar uma chamada que nao cabe e
+# levar 429.
+CUSTO_ESTIMADO = 6_000
 
 # A pergunta e entrada de usuario e entra num prompt: sem teto, uma colagem
 # acidental de dez mil caracteres estoura a cota da janela inteira.
@@ -82,17 +84,27 @@ def montar_prompt(
     finding: Finding | None = None,
     momento_ms: int | None = None,
     resolver: facts_render.NameResolver | None = None,
+    kits: str = "",
 ) -> str:
     """O prompt completo. Separado de `responder` para poder ser medido."""
+    from riftcoach.analysis.objetivos import papel_para_ia, revisar, texto_para_ia
+    from riftcoach.analysis.report import analisar_build
+
     partes = [
+        papel_para_ia(facts.focus.position or "MIDDLE"),
         "=== DADOS DA PARTIDA ===",
         facts_render.render(facts, None, resolver).strip(),
+        # Build, runas, matchup e composicao com a amostra do servidor: e o que
+        # deixa responder "o que eu devia ter feito de item" ou "como jogar
+        # contra ele" com numero, e nao so com o conhecimento geral do modelo.
+        analisar_build(facts, resolver)[0],
+        kits,
         (
             "=== METODO PVPA ===\n"
             "Para objetivos, raciocine nesta ordem: Pressao da wave -> Visao -> "
             "Pressao/prioridade novamente -> Acao. Use apenas os sinais fornecidos. "
-            "Se vida, mana, itens no instante, contagem de aliados/inimigos ou "
-            "intencao do jungler nao constarem, diga que nao estao disponiveis."
+            "Se vida, mana ou itens no instante nao constarem, diga que nao estao "
+            "disponiveis.\n" + texto_para_ia(revisar(facts))
         ),
         _momento_em_foco(finding, momento_ms),
         "=== PERGUNTA DO JOGADOR ===",
@@ -129,9 +141,20 @@ async def responder(
         )
 
     tarefa = text_task("pergunta", CUSTO_ESTIMADO, interactive=True)
+    kits = ""
+    try:
+        from riftcoach.knowledge.kits import texto_dos_kits
+
+        kits = await texto_dos_kits(
+            facts.focus.champion, facts.opponent.champion if facts.opponent else None, facts.patch
+        )
+    except Exception:  # sem rede responde sem o kit
+        kits = ""
     saida = await router.complete(
         tarefa,
-        montar_prompt(facts, texto, finding=finding, momento_ms=momento_ms, resolver=resolver),
+        montar_prompt(
+            facts, texto, finding=finding, momento_ms=momento_ms, resolver=resolver, kits=kits
+        ),
         system=load_prompt("pergunta"),
     )
     return Resposta(texto=saida.text.strip(), provedor=saida.provider)

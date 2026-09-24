@@ -155,12 +155,22 @@ def test_deaths_are_attributed_directly(loser: MatchFacts) -> None:
     assert all(b.involvement == "direct" for b in mortes)
 
 
-def test_objectives_lost_far_away_are_positional(loser: MatchFacts) -> None:
+def _todos(fx: str) -> list[MatchFacts]:
+    match, tl = load(fx)
+    return [distill(match, tl, p["puuid"]) for p in match["info"]["participants"]]
+
+
+def test_objectives_lost_far_away_are_positional() -> None:
     """'Voce morreu' e 'seu time perdeu o barao enquanto voce empurrava a top'
-    pedem correcoes completamente diferentes."""
-    objetivos = [b for b in find_blunders(loser) if b.kind.startswith("perdeu")]
-    assert objetivos
-    assert all(b.involvement in ("positional", "team") for b in objetivos)
+    pedem correcoes completamente diferentes — e as fixtures tem os dois."""
+    envolvimentos = {
+        b.involvement
+        for fx in ("sr_ranked_35min", "sr_flex_41min")
+        for f in _todos(fx)
+        for b in find_blunders(f)
+        if b.kind.startswith("perdeu")
+    }
+    assert envolvimentos == {"positional", "team"}
 
 
 def test_blunder_detail_is_specific(loser: MatchFacts) -> None:
@@ -262,45 +272,70 @@ def test_blunders_convert_to_marks(loser: MatchFacts) -> None:
     assert s.criticals()
 
 
-def test_far_from_the_objective_is_positional_not_team(loser: MatchFacts) -> None:
-    """Regressao vista num relatorio REAL.
+def test_far_from_the_objective_is_positional_not_team() -> None:
+    """Regressao vista num relatorio REAL, duas vezes.
 
-    Um Arauto tomado no pit do Barao com o jogador em NEUTRAL_MID_LANE saia
-    como "o time perdeu isto com voce presente" — e ele estava a 3.847 unidades
-    dali. O criterio antigo olhava so o prefixo da zona, e NEUTRAL_MID_LANE nao
-    comeca com OWN_.
+    Primeiro: um Arauto no pit do Barao com o jogador em NEUTRAL_MID_LANE saia
+    como "o time perdeu com voce presente" — ele estava a 3.847 unidades.
+    Depois, o contrario: "voce estava longe" do Barao em que o jogador tinha
+    ASSISTENCIA, porque a posicao vinha do frame de minuto mais proximo.
 
-    Zona nao responde a pergunta: ela nao distingue mil de nove mil unidades.
-    Os dois casos pedem conselhos opostos — "lute melhor" contra "esteja la".
+    O criterio agora usa o raio de duvida: LONGE so quando ate o melhor caso e
+    longe; PERTO (time) so quando participou ou ate o pior caso e perto.
     """
-    from riftcoach.analysis.advantage import NEAR_OBJECTIVE_UNITS
+    from riftcoach.analysis.objetivos import PERTO_U
 
-    achou_longe = False
-    for b in find_blunders(loser):
-        if not b.kind.startswith("perdeu"):
-            continue
-        o = next(
-            (x for x in loser.objectives if x.t_ms == b.t_ms and not x.taken_by_focus_team),
-            None,
-        )
-        if o is None or o.focus_player_distance_u is None:
-            continue
-        if o.focus_player_distance_u > NEAR_OBJECTIVE_UNITS:
-            assert b.involvement == "positional", (
-                f"{o.kind} a {o.focus_player_distance_u}u virou {b.involvement}"
-            )
-            achou_longe = True
-        else:
-            assert b.involvement == "team"
-    assert achou_longe, "a fixture nao exercitou o caso de estar longe"
+    vistos = 0
+    for fx in ("sr_ranked_35min", "sr_flex_41min"):
+        for f in _todos(fx):
+            for b in find_blunders(f):
+                if not b.kind.startswith("perdeu"):
+                    continue
+                o = next(x for x in f.objectives if x.t_ms == b.t_ms)
+                assert o.presence is not None
+                d, e = o.focus_player_distance_u, o.presence.focus_distance_err_u
+                if b.involvement == "positional":
+                    assert d is not None and e is not None and d - e >= PERTO_U
+                else:
+                    assert o.presence.focus_participated or (
+                        d is not None and e is not None and d + e <= PERTO_U
+                    )
+                vistos += 1
+    assert vistos
 
 
-def test_the_distance_travels_into_the_explanation(loser: MatchFacts) -> None:
+def test_the_player_is_not_blamed_for_what_was_not_theirs() -> None:
+    """Nenhum objetivo perdido vira erro do jogador quando:
+
+    - nao era objetivo do papel dele naquele momento (ADC e o Arauto);
+    - o time estava em desvantagem de dois ou mais vivos (lutar seria pior);
+    - ele estava morto (a morte ja e o erro, contado a parte).
+    """
+    from riftcoach.analysis.objetivos import papel_no_objetivo
+
+    for fx in ("sr_ranked_35min", "sr_flex_41min"):
+        for f in _todos(fx):
+            for b in find_blunders(f):
+                if not b.kind.startswith("perdeu"):
+                    continue
+                o = next(x for x in f.objectives if x.t_ms == b.t_ms)
+                assert o.presence is not None
+                assert papel_no_objetivo(f.focus.position, o.kind, o.t_ms, o.subtype) != "fora"
+                assert o.presence.allies_alive > o.presence.enemies_alive - 2
+                assert not o.presence.focus_dead
+
+
+def test_the_distance_travels_into_the_explanation() -> None:
     """O numero que sustenta a acusacao precisa aparecer.
 
-    "voce estava do outro lado do mapa" sem a distancia e opiniao; com ela, o
-    usuario confere.
+    "voce estava longe" sem a distancia e opiniao; com ela (e com o raio de
+    duvida), o usuario confere.
     """
-    perdidos = [b for b in find_blunders(loser) if b.kind.startswith("perdeu")]
-    assert perdidos
-    assert any("u do objetivo" in b.detail for b in perdidos)
+    longe = [
+        b
+        for f in _todos("sr_ranked_35min")
+        for b in find_blunders(f)
+        if b.involvement == "positional"
+    ]
+    assert longe
+    assert all("u do objetivo" in b.detail and "±" in b.detail for b in longe)

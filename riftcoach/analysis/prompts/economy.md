@@ -21,6 +21,11 @@ realmente comprou. Não recebeu lutas nem objetivos.
 4. **Sentinela de Controle é a melhor compra por ouro do jogo, para todas as rotas.** Se ela aparece
    em poucos recalls, isso é um erro de checklist — barato de corrigir e por isso valioso de apontar.
 
+5. **Build e runas contra os melhores, e contra a composição.** Se houver o bloco BUILD, RUNAS E
+   MATCHUP, compare o que o jogador fez com o que os melhores do servidor fazem com o mesmo campeão —
+   citando a amostra. Cruze com a COMPOSIÇÃO INIMIGA: faltou anti-cura contra quem curou muito? O
+   dano inimigo era quase todo de um tipo? Divergir do padrão só é erro quando não havia motivo.
+
 ## Cuidados
 
 - **Recalls são inferidos, nunca medidos.** A Riot não emite evento de recall; eles vêm de transições

@@ -24,6 +24,7 @@ nome, que no mesmo volume o Windows garante ser atomico.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -51,6 +52,13 @@ def _caminho(match_id: str, puuid: str) -> Path:
     # dos primeiros caracteres: o par (partida, inicio do puuid) ja e unico,
     # porque dois jogadores da mesma partida diferem bem antes do 12o.
     return sessions_dir() / f"{match_id}__{puuid[:12]}.json"
+
+
+def session_path(match_id: str, puuid: str) -> Path:
+    """Onde a revisao mora em disco. O overlay olha a data de modificacao
+    para saber se o relatorio web mexeu nela, em vez de reler o arquivo a
+    cada quadro."""
+    return _caminho(match_id, puuid)
 
 
 # --------------------------------------------------------------------------
@@ -118,10 +126,28 @@ def load_session(match_id: str, puuid: str) -> ReviewSession | None:
 
 
 def save_session(rs: ReviewSession) -> Path:
+    """Grava de forma atomica, e insiste um pouco antes de desistir.
+
+    No Windows a troca de nome FALHA (acesso negado) se outro processo esta
+    com o arquivo aberto naquele instante — e ha dois lendo este arquivo: o
+    overlay e o servidor do relatorio. Sem a insistencia a gravacao perdia a
+    corrida de vez em quando e deixava um `.tmp` orfao na pasta; com ela, a
+    janela de conflito (milissegundos) quase sempre ja passou na segunda
+    tentativa.
+    """
     p = _caminho(rs.match_id, rs.puuid)
     tmp = p.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(rs.model_dump_json(indent=2), encoding="utf-8")
-    tmp.replace(p)
+    for tentativa in range(8):
+        try:
+            tmp.replace(p)
+            return p
+        except PermissionError:
+            if tentativa == 7:
+                with contextlib.suppress(OSError):
+                    tmp.unlink()
+                raise
+            time.sleep(0.025 * (tentativa + 1))
     return p
 
 
@@ -142,20 +168,27 @@ def open_session(
     if report is not None and facts is not None:
         do_usuario = [m for m in rs.marks if m.author == "user"]
         ai = [
-            m for m in marks_from_report(report, facts)
-            if (m.t_ms, m.text) not in rs.dismissed_ai
+            m for m in marks_from_report(report, facts) if (m.t_ms, m.text) not in rs.dismissed_ai
         ]
         rs.marks = sorted(ai + do_usuario, key=lambda m: m.t_ms)
         save_session(rs)
     return rs
 
 
-def add_user_mark(rs: ReviewSession, t_ms: int, kind: MarkKind = "note", text: str = "") -> Mark:
+def add_user_mark(
+    rs: ReviewSession,
+    t_ms: int,
+    kind: MarkKind = "note",
+    text: str = "",
+    *,
+    gravar: bool = True,
+) -> Mark:
     """Coloca uma marcacao do jogador e grava na hora.
 
     Gravar a cada marcacao, e nao ao sair, porque nao existe "ao sair": a
     pessoa fecha o replay quando termina de assistir, nao quando termina de
-    anotar.
+    anotar. `gravar=False` e para o overlay, que grava fora do laco (e em
+    cima da versao mais nova do arquivo) para nao travar a tela.
     """
     m = Mark(
         t_ms=max(0, t_ms),
@@ -165,7 +198,8 @@ def add_user_mark(rs: ReviewSession, t_ms: int, kind: MarkKind = "note", text: s
     )
     rs.add(m)
     rs.last_position_ms = m.t_ms
-    save_session(rs)
+    if gravar:
+        save_session(rs)
     return m
 
 

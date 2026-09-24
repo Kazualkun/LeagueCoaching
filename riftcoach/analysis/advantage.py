@@ -38,6 +38,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
+from riftcoach.core.zones import objetivo_legivel, zona_legivel
 from riftcoach.parse.facts import MatchFacts
 
 # --- pesos em ouro-equivalente -------------------------------------------
@@ -134,6 +135,8 @@ class Blunder:
     wp_after: float
     involvement: Involvement
     detail: str
+    # Como a pessoa le: "Perdeu o Dragão do Oceano", nao "perdeu DRAGON".
+    titulo: str = ""
 
     @property
     def wp_loss(self) -> float:
@@ -259,9 +262,12 @@ def find_blunders(facts: MatchFacts, window_ms: int = 45_000) -> list[Blunder]:
 
     for d in facts.deaths:
         antes, depois = par(d.t_ms)
-        detalhe = f"morreu em {d.zone} para {'+'.join(d.killers) or '?'} (swing {d.gold_swing}g)"
+        detalhe = (
+            f"morreu em {zona_legivel(d.zone)} para {'+'.join(d.killers) or '?'} "
+            f"(swing {d.gold_swing}g)"
+        )
         if d.objective_window:
-            detalhe += f", com {d.objective_window}"
+            detalhe += f"; {d.objective_window}"
         if d.gold_at_death >= 1000:
             detalhe += f", segurando {d.gold_at_death}g nao gastos"
         out.append(
@@ -272,50 +278,78 @@ def find_blunders(facts: MatchFacts, window_ms: int = 45_000) -> list[Blunder]:
                 wp_after=depois.win_probability,
                 involvement="direct",
                 detail=detalhe,
+                titulo="Morte",
             )
         )
 
+    from riftcoach.analysis.objetivos import PERTO_U, papel_no_objetivo
+
+    role = facts.focus.position or "MIDDLE"
     for o in facts.objectives:
         if o.taken_by_focus_team or o.kind not in (
             "DRAGON",
             "BARON_NASHOR",
             "RIFTHERALD",
+            "ATAKHAN",
         ):
             continue
-        antes, depois = par(o.t_ms)
-        # O jogador estava NA luta, ou do outro lado do mapa?
-        #
-        # A versao anterior olhava so o prefixo da zona: "OWN_" ou "BASE"
-        # contava como longe, e qualquer outra coisa como presente. Isso
-        # produziu, num relatorio real, "o time perdeu isto com voce presente"
-        # para um Arauto tomado no pit do Barao enquanto o jogador estava em
-        # NEUTRAL_MID_LANE — que nao e perto de nada.
-        #
-        # Zona nao responde a pergunta: NEUTRAL_MID_LANE nao diz se voce estava
-        # a mil ou a nove mil unidades do pit. Distancia responde, e a
-        # destilacao ja mede. Sem ela (posicao nao lida), a zona volta a ser o
-        # criterio, porque e o unico que sobra.
-        if o.focus_player_distance_u is not None:
-            longe = o.focus_player_distance_u > NEAR_OBJECTIVE_UNITS
+        # QUEM RESPONDE POR ESTE OBJETIVO. A versao anterior cobrava todo
+        # objetivo perdido de qualquer jogador: a ADC "estava do outro lado do
+        # mapa" do Arauto que nao era dela, e isso virava erro grave.
+        papel = papel_no_objetivo(role, o.kind, o.t_ms, o.subtype)
+        if papel == "fora":
+            continue
+        p = o.presence
+        if p is not None and p.allies_alive <= p.enemies_alive - 2:
+            # Cedido em desvantagem numerica: lutar seria pior. O erro sao as
+            # mortes que abriram a janela, e elas ja estao na lista.
+            continue
+        if p is not None and p.focus_dead:
+            # Idem: a morte e o erro, e ja entrou acima. Contar os dois seria
+            # cobrar a mesma coisa duas vezes.
+            continue
+        dist = o.focus_player_distance_u
+        erro = p.focus_distance_err_u if p is not None else None
+        if p is not None and p.focus_participated:
+            envolvimento: Involvement = "team"
+        elif dist is not None and erro is not None:
+            # So afirma LONGE quando ate o melhor caso da estimativa e longe, e
+            # PERTO quando ate o pior caso e perto. No meio, nao acusa.
+            if dist - erro >= PERTO_U:
+                envolvimento = "positional"
+            elif dist + erro <= PERTO_U:
+                envolvimento = "team"
+            else:
+                continue
+        elif p is None and dist is not None:
+            # Fatos antigos, sem estimativa de erro: cai no criterio antigo.
+            envolvimento = "positional" if dist > NEAR_OBJECTIVE_UNITS else "team"
         else:
-            longe = o.focus_player_zone.startswith("OWN_") or "BASE" in o.focus_player_zone
+            continue
+        if envolvimento == "positional" and papel != "principal":
+            continue
+        antes, depois = par(o.t_ms)
+        nome = objetivo_legivel(o.kind, o.subtype)
+        onde = (
+            "voce participou da disputa"
+            if p is not None and p.focus_participated
+            else f"voce estava em {zona_legivel(o.focus_player_zone)}"
+            + (f", a ~{dist}u do objetivo" if dist is not None else "")
+            + (f" (±{erro}u)" if erro else "")
+        )
+        numeros = f"; vivos {p.allies_alive}x{p.enemies_alive}" if p is not None else ""
         out.append(
             Blunder(
                 t_ms=o.t_ms,
                 kind=f"perdeu {o.kind}",
                 wp_before=antes.win_probability,
                 wp_after=depois.win_probability,
-                involvement="positional" if longe else "team",
+                involvement=envolvimento,
                 detail=(
-                    f"{o.kind}{'/' + o.subtype if o.subtype else ''} para o inimigo"
-                    f"; voce estava em {o.focus_player_zone}"
-                    + (
-                        f" ({o.focus_player_distance_u}u do objetivo)"
-                        if o.focus_player_distance_u is not None
-                        else ""
-                    )
+                    f"{nome} para o inimigo; {onde}{numeros}"
                     + ("" if o.wards_placed_60s_before else "; nenhuma ward sua nos 60s")
                 ),
+                titulo=f"Perdeu {nome}",
             )
         )
 
@@ -353,6 +387,6 @@ def summarize(facts: MatchFacts) -> str:
             marca = "CRITICO" if b.is_critical else f"sev{b.severity}"
             linhas.append(
                 f"{b.t_ms // 60000}:{(b.t_ms // 1000) % 60:02d} [{marca}] "
-                f"-{b.wp_loss:.0f}pp {b.kind} ({b.involvement}) — {b.detail}"
+                f"-{b.wp_loss:.0f}pp {b.titulo or b.kind} ({b.involvement}) — {b.detail}"
             )
     return "\n".join(linhas)

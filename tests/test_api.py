@@ -143,11 +143,14 @@ def test_the_advantage_curve_is_one_point_per_minute(client: Any, garen: MatchFa
 def test_the_report_exposes_objective_checklist(client: Any) -> None:
     data = client.get("/api/report").json()
     assert "objective_review" in data
+    assert data["objective_review"]
     for objective in data["objective_review"]:
-        assert "contest" in objective
-        assert "wave" in objective
-        assert "numbers" in objective
-        assert "jungler_intent" in objective
+        # Em portugues, com veredito, e sem codigo cru da Riot na tela.
+        assert objective["name"] and objective["verdict"]
+        assert objective["role_duty"] in ("principal", "secundario", "fora")
+        textos = " ".join(i["text"] for i in objective["items"])
+        for cru in ("HORDE", "HOLDING_MID", "Smite", "BARON_NASHOR", "NEUTRAL_"):
+            assert cru not in textos + objective["name"]
 
 
 def test_benchmarks_carry_their_provenance(client: Any) -> None:

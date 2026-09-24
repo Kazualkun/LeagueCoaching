@@ -34,6 +34,7 @@ from riftcoach.core.schema import (
     Finding,
     Phase,
 )
+from riftcoach.core.zones import objetivo_legivel, zona_com_preposicao
 from riftcoach.knowledge.benchmarks import (
     Benchmark,
     BenchmarkTable,
@@ -196,8 +197,9 @@ def rule_measured_blunders(ctx: RuleContext) -> list[Finding]:
         if b.kind.startswith("perdeu"):
             categoria = "objective"
 
+        titulo = b.titulo or b.kind.capitalize()
         evidencias = [
-            _t1(f"{b.kind} em {mmss(b.t_ms)}: {b.detail}", b.t_ms),
+            _t1(f"{titulo} em {mmss(b.t_ms)}: {b.detail}", b.t_ms),
             _t2(
                 f"custou {b.wp_loss:.0f} pontos percentuais de probabilidade de vitoria "
                 f"({100 * b.wp_before:.0f}% -> {100 * b.wp_after:.0f}%)",
@@ -210,9 +212,11 @@ def rule_measured_blunders(ctx: RuleContext) -> list[Finding]:
         ]
 
         if b.involvement == "positional":
+            from riftcoach.analysis.objetivos import _como_chegar
+
             fix = (
-                "Voce estava do outro lado do mapa quando isso foi decidido. A correcao "
-                "nao e lutar melhor — e estar la. Resolva a rota antes, nao depois."
+                "Era um objetivo do seu papel e voce estava longe quando ele caiu. A "
+                "correcao nao e lutar melhor — e estar la: " + _como_chegar(ctx.role, b.t_ms)
             )
             drill = (
                 "Nas proximas 3 partidas: quando o timer de um objetivo chegar em 60s, "
@@ -241,7 +245,10 @@ def rule_measured_blunders(ctx: RuleContext) -> list[Finding]:
                 phase=phase_of(b.t_ms),
                 severity=b.severity,
                 timestamp_ms=b.t_ms,
-                claim=f"{b.kind.capitalize()} em {mmss(b.t_ms)} custou {b.wp_loss:.0f}pp.",
+                claim=(
+                    f"{titulo} em {mmss(b.t_ms)} — a probabilidade de vitoria caiu "
+                    f"{b.wp_loss:.0f} pontos nessa janela."
+                ),
                 evidence=evidencias,
                 fix=fix,
                 drill=drill,
@@ -441,7 +448,8 @@ def rule_gold_hoarding(ctx: RuleContext) -> list[Finding]:
             evidence=[
                 _t1(
                     " · ".join(
-                        f"{d.t} morreu com {d.gold_at_death}g em {d.zone}" for d in caros[:4]
+                        f"{d.t} morreu com {d.gold_at_death}g {zona_com_preposicao(d.zone)}"
+                        for d in caros[:4]
                     ),
                     pior.t_ms,
                 ),
@@ -473,16 +481,17 @@ def rule_death_clusters(ctx: RuleContext) -> list[Finding]:
     out: list[Finding] = []
 
     por_zona = Counter(d.zone for d in mortes)
-    zona, n = por_zona.most_common(1)[0]
-    if n >= DEATH_CLUSTER_MIN:
-        nessa = [d for d in mortes if d.zone == zona]
+    zona_crua, n = por_zona.most_common(1)[0]
+    zona = zona_com_preposicao(zona_crua)
+    if n >= DEATH_CLUSTER_MIN and zona_crua not in ("?", "UNKNOWN"):
+        nessa = [d for d in mortes if d.zone == zona_crua]
         out.append(
             Finding(
                 category="positioning",
                 phase=phase_of(nessa[0].t_ms),
                 severity=3 if n >= 4 else 2,
                 timestamp_ms=nessa[0].t_ms,
-                claim=f"{n} das suas {len(mortes)} mortes aconteceram em {zona}.",
+                claim=f"{n} das suas {len(mortes)} mortes aconteceram {zona}.",
                 evidence=[
                     _t1(
                         " · ".join(f"{d.t} {'+'.join(d.killers) or '?'}" for d in nessa[:5]),
@@ -491,11 +500,11 @@ def rule_death_clusters(ctx: RuleContext) -> list[Finding]:
                 ],
                 fix=(
                     f"Quando o mesmo lugar te mata {n} vezes, o problema nao e a luta — "
-                    f"e ir ate la. Antes de entrar em {zona} de novo, exija uma das "
+                    f"e ir ate la. Antes de voltar {zona}, exija uma das "
                     "duas: visao, ou um aliado."
                 ),
                 drill=(
-                    f"Reveja as {n} mortes em {zona} no replay, uma atras da outra. "
+                    f"Reveja as {n} mortes {zona} no replay, uma atras da outra. "
                     "O padrao aparece sozinho quando elas estao lado a lado."
                 ),
                 confidence=0.8,
@@ -514,8 +523,8 @@ def rule_death_clusters(ctx: RuleContext) -> list[Finding]:
                     timestamp_ms=b.t_ms,
                     claim=(f"Duas mortes em {(b.t_ms - a.t_ms) // 1000}s — {a.t} e {b.t}."),
                     evidence=[
-                        _t1(f"{a.t} morreu em {a.zone}", a.t_ms),
-                        _t1(f"{b.t} morreu em {b.zone}", b.t_ms),
+                        _t1(f"{a.t} morreu {zona_com_preposicao(a.zone)}", a.t_ms),
+                        _t1(f"{b.t} morreu {zona_com_preposicao(b.zone)}", b.t_ms),
                     ],
                     fix=(
                         "Morrer duas vezes seguidas quase sempre e voltar para uma luta "
@@ -535,45 +544,60 @@ def rule_death_clusters(ctx: RuleContext) -> list[Finding]:
 
 
 def rule_objective_deaths(ctx: RuleContext) -> list[Finding]:
-    """Morrer com um objetivo prestes a nascer.
+    """Morrer logo antes de um objetivo DO SEU PAPEL cair.
 
     O exemplo de abertura do README e exatamente isto, e nao por acaso: e o
     erro de macro mais caro que a telemetria consegue enxergar sozinha.
+
+    O papel entra aqui de proposito. A versao anterior dizia a uma ADC que ela
+    "morreu com RIFTHERALD_EM_54s" — o Arauto e do lado de cima e nao era
+    dela. Morte perto de objetivo que nao e do papel continua sendo morte
+    (ela aparece nas outras regras), mas nao vira erro de macro.
     """
-    perto = [d for d in ctx.facts.deaths if d.objective_window]
+    from riftcoach.analysis.objetivos import papel_no_objetivo
+
+    perto = [
+        d
+        for d in ctx.facts.deaths
+        if d.next_objective_kind
+        and papel_no_objetivo(ctx.role, d.next_objective_kind, d.t_ms) != "fora"
+    ]
     if not perto:
         return []
 
-    pior = max(perto, key=lambda d: d.gold_swing)
+    pior = max(perto, key=lambda d: -d.gold_swing)
+    objetivo = objetivo_legivel(pior.next_objective_kind or "")
+    zona = zona_com_preposicao(pior.zone)
     ev = [
         _t1(
-            f"morte D{pior.n} em {pior.t}, em {pior.zone}, para "
+            f"morte em {pior.t}, {zona}, para "
             f"{'+'.join(pior.killers) or '?'} (swing {pior.gold_swing}g)",
             pior.t_ms,
         ),
-        _t1(f"janela de objetivo no momento da morte: {pior.objective_window}", pior.t_ms),
+        _t1(f"{objetivo} caiu {pior.next_objective_in_s}s depois da morte", pior.t_ms),
     ]
-    if pior.wave_proxy != "UNKNOWN":
+    if pior.allies_alive is not None and pior.enemies_alive is not None:
         ev.append(
             _t2(
-                f"estado de wave no momento: {pior.wave_proxy}",
+                f"vivos no instante da morte: seu time {pior.allies_alive}, "
+                f"inimigo {pior.enemies_alive}",
                 pior.t_ms,
                 assumption=(
-                    "a API da Riot nao tem campo de estado de wave; isto e derivado do "
-                    "ritmo de CS e da sua posicao, e pode estar errado"
+                    "a Riot nao informa quem esta morto; o tempo de renascimento e "
+                    "estimado pelo nivel e pelo minuto da partida (erro tipico de 15%)"
                 ),
             )
         )
-    avançado_sem_cobertura = "ENEMY" in pior.zone and pior.allies_within_2000u == 0
+    avancado_sem_cobertura = "ENEMY" in pior.zone and pior.allies_within_2000u == 0
     sem_visao_registrada = pior.wards_placed_60s_before == 0
-    if avançado_sem_cobertura:
+    if avancado_sem_cobertura:
         ev.append(
             _t2(
-                "morreu avançado sem aliados próximos para dar cobertura",
+                "morreu no lado inimigo sem aliados por perto",
                 pior.t_ms,
                 assumption=(
-                    "a posição foi classificada como lado inimigo e não havia "
-                    "aliados no raio de 2.000 unidades no frame disponível"
+                    "nenhum aliado estimado a menos de 2.000 unidades no instante da "
+                    "morte, pelas posicoes registradas na timeline"
                 ),
             )
         )
@@ -583,11 +607,22 @@ def rule_objective_deaths(ctx: RuleContext) -> list[Finding]:
                 "nenhuma ward sua foi registrada nos 60 segundos anteriores",
                 pior.t_ms,
                 assumption=(
-                    "a contagem de wards existe, mas a Riot não informa a posição "
-                    "delas; isso não prova que o local exato estava sem visão"
+                    "a contagem de wards existe, mas a Riot nao informa a posicao "
+                    "delas; isso nao prova que o local exato estava sem visao"
                 ),
             )
         )
+
+    if avancado_sem_cobertura:
+        detalhe = (
+            " — no lado inimigo, sem visao propria registrada e sem cobertura do time"
+            if sem_visao_registrada
+            else " — no lado inimigo e sem cobertura do time"
+        )
+    elif len(perto) >= 2:
+        detalhe = f" — e isso aconteceu {len(perto)} vezes na partida."
+    else:
+        detalhe = "."
 
     return [
         Finding(
@@ -596,24 +631,14 @@ def rule_objective_deaths(ctx: RuleContext) -> list[Finding]:
             severity=4 if len(perto) >= 2 else 3,
             timestamp_ms=pior.t_ms,
             claim=(
-                f"Voce morreu em {pior.t} com {pior.objective_window}"
-                + (
-                    + (
-                        " — avançado, sem visão própria registrada e sem cobertura do time"
-                        if sem_visao_registrada
-                        else " — avançado e sem cobertura do time"
-                    )
-                    if avançado_sem_cobertura
-                    else f" — e isso aconteceu {len(perto)} vezes."
-                    if len(perto) >= 2
-                    else "."
-                )
+                f"Voce morreu em {pior.t} e, {pior.next_objective_in_s}s depois, caiu o "
+                f"objetivo: {objetivo}{detalhe}"
             ),
             evidence=ev,
             fix=(
-                "Com um objetivo a menos de um minuto de nascer, o seu trabalho nao e "
-                "conseguir mais uma coisa: e estar do lado certo do mapa, com visao. "
-                "Atravesse no recall ANTES do objetivo, nao depois."
+                "Com um objetivo do seu papel a menos de um minuto de cair, o seu "
+                "trabalho nao e conseguir mais uma coisa: e estar vivo, do lado certo do "
+                "mapa, com visao. Recue ou resete ANTES da janela, nao durante."
             ),
             drill=(
                 "Nas proximas 3 partidas: quando o timer de um objetivo chegar em 60s, "

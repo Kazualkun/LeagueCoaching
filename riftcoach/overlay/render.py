@@ -31,6 +31,7 @@ from riftcoach.overlay.scene import (
     Circle,
     Label,
     Line,
+    Path,
     Scene,
 )
 
@@ -38,7 +39,20 @@ FAMILIA = "Segoe UI"
 
 
 class OverlayWindow:
-    """Uma janela sem borda, sempre no topo, que o mouse atravessa."""
+    """Uma janela sem borda, sempre no topo, que o mouse atravessa.
+
+    DUAS JANELAS, e a segunda e o conserto do pincel. A janela do overlay usa
+    uma cor-chave: pixel daquela cor vira buraco, e o Windows manda o clique
+    do buraco para o jogo embaixo. Para desenhar, a versao anterior trocava o
+    fundo por uma cor opaca — o que resolvia o mouse, mas COBRIA O JOGO com
+    uma tela escura justamente enquanto a pessoa tentava rabiscar sobre ele.
+
+    Agora o overlay nunca deixa de atravessar o clique. Quem recebe o mouse e
+    o teclado no pincel e na digitacao e a LOUSA: uma segunda janela, do
+    mesmo tamanho, com opacidade de 1%. Ela e invisivel na pratica, mas nao e
+    buraco — entao o clique para nela. O overlay fica por cima e mostra o
+    traco; a lousa fica por baixo e ouve.
+    """
 
     def __init__(self) -> None:
         win.set_dpi_aware()
@@ -79,9 +93,22 @@ class OverlayWindow:
         # Cria o HWND sem mapear a janela: `update_idletasks` numa janela
         # retirada processa a criacao mas nao a exibicao.
         self.root.update_idletasks()
-        self._hwnd = self._descobrir_hwnd()
+        self._hwnd = self._descobrir_hwnd(self.root)
         if self._hwnd:
             win.make_click_through(self._hwnd)
+
+        self.lousa = tk.Toplevel(self.root)
+        self.lousa.withdraw()
+        self.lousa.overrideredirect(True)
+        self.lousa.attributes("-topmost", True)
+        self.lousa.configure(bg="#000000", cursor="crosshair")
+        with contextlib.suppress(tk.TclError):
+            # 1% e invisivel a olho nu e ainda conta como janela para o
+            # clique; zero voltaria a ser buraco.
+            self.lousa.attributes("-alpha", 0.01)
+        self.lousa.update_idletasks()
+        self._hwnd_lousa = self._descobrir_hwnd(self.lousa)
+        self._lousa_visivel = False
 
         self._rect: Rect | None = None
         self._fontes: dict[tuple[int, bool], tkfont.Font] = {}
@@ -89,38 +116,23 @@ class OverlayWindow:
         # visivel, e a primeira chamada a `mostrar(True)` virava um no-op.
         self._visivel = False
 
-    def superficie_interativa(self, ligada: bool) -> None:
-        """Remove o buraco de cor enquanto o pincel precisa receber arrasto."""
-        if not self.vazado:
-            return
-        try:
-            if ligada:
-                # No modo pincel nao pode existir um "buraco" no fundo:
-                # qualquer pixel transparente deixa o clique atravessar para
-                # o League. A cor-chave e trocada por uma cor que nao aparece
-                # na superficie interativa; alpha 1 preserva a opacidade dos
-                # tracos, enquanto o fundo escuro avisa que o modo esta ativo.
-                self.root.attributes("-transparentcolor", "#010203")
-                self.root.configure(bg="#101820")
-                self.canvas.configure(bg="#101820")
-                self.root.attributes("-alpha", 1.0)
-            else:
-                self.root.attributes("-alpha", 1.0)
-                self.root.configure(bg=COR_TRANSPARENTE)
-                self.canvas.configure(bg=COR_TRANSPARENTE)
-                self.root.attributes("-transparentcolor", COR_TRANSPARENTE)
-        except tk.TclError:
-            # Algumas versões do Tk não aceitam remover transparentcolor.
-            # O modo click-through continua sendo restaurado pelo HWND.
-            pass
-
     @property
     def hwnd(self) -> int:
         """O identificador da janela, para quem precisa perguntar ao Windows
         sobre ela — o laco usa para nao se confundir com o proprio overlay."""
         return self._hwnd
 
-    def _descobrir_hwnd(self) -> int:
+    @property
+    def hwnds(self) -> tuple[int, ...]:
+        """As janelas que pertencem a revisao: o overlay e a lousa.
+
+        Com a lousa em primeiro plano (pincel ou digitacao), a pergunta "a
+        pessoa esta no jogo?" tem de responder sim — senao o laco esconderia o
+        overlay justamente enquanto ela desenha.
+        """
+        return tuple(h for h in (self._hwnd, self._hwnd_lousa) if h)
+
+    def _descobrir_hwnd(self, janela: tk.Misc) -> int:
         """O HWND real da janela de topo.
 
         Com `overrideredirect`, o Tk as vezes devolve o filho e as vezes o
@@ -129,7 +141,7 @@ class OverlayWindow:
         continuaria sendo capturado.
         """
         try:
-            ident = int(self.root.winfo_id())
+            ident = int(janela.winfo_id())
         except tk.TclError:
             return 0
         if not win.disponivel():
@@ -144,11 +156,13 @@ class OverlayWindow:
     # ----------------------------------------------------------------
 
     def cobrir(self, r: Rect) -> None:
-        """Encaixa a janela sobre o retangulo dado, se ele mudou."""
+        """Encaixa a janela (e a lousa) sobre o retangulo dado, se ele mudou."""
         if self._rect == r:
             return
         self._rect = r
-        self.root.geometry(f"{int(r.w)}x{int(r.h)}+{int(r.x)}+{int(r.y)}")
+        geo = f"{int(r.w)}x{int(r.h)}+{int(r.x)}+{int(r.y)}"
+        self.root.geometry(geo)
+        self.lousa.geometry(geo)
         # Reafirmar o topmost: o League, ao ganhar o foco, empurra o overlay
         # para tras uma vez. Uma reafirmacao a cada mudanca de geometria cobre
         # isso sem ficar piscando a cada quadro.
@@ -170,6 +184,8 @@ class OverlayWindow:
         if visivel:
             win.show_no_activate(self._hwnd)
             self.root.attributes("-topmost", True)
+            if self._lousa_visivel:
+                win.raise_topmost(self._hwnd)
         else:
             win.hide(self._hwnd)
 
@@ -194,15 +210,30 @@ class OverlayWindow:
         for it in cena.items:
             if isinstance(it, Box):
                 r = it.rect
-                c.create_rectangle(
-                    r.x,
-                    r.y,
-                    r.right,
-                    r.bottom,
-                    fill=it.fill or "",
-                    outline=it.outline or "",
-                    width=it.width,
-                )
+                if it.translucido and it.fill:
+                    # Pontilhado: um quarto dos pixels vira a cor-chave, ou
+                    # seja, buraco. O jogo aparece por tras como por uma tela
+                    # fina — e o jeito do Tk de ter meia transparencia.
+                    c.create_rectangle(
+                        r.x,
+                        r.y,
+                        r.right,
+                        r.bottom,
+                        fill=it.fill,
+                        outline=it.outline or "",
+                        width=it.width,
+                        stipple="gray75",
+                    )
+                else:
+                    c.create_rectangle(
+                        r.x,
+                        r.y,
+                        r.right,
+                        r.bottom,
+                        fill=it.fill or "",
+                        outline=it.outline or "",
+                        width=it.width,
+                    )
             elif isinstance(it, Circle):
                 c.create_oval(
                     it.x - it.r,
@@ -227,15 +258,53 @@ class OverlayWindow:
                     )
                 else:
                     c.create_line(it.x1, it.y1, it.x2, it.y2, fill=it.color, width=it.width)
+            elif isinstance(it, Path):
+                self._caminho(it.points, it.color, it.width)
             else:
                 self._texto(it)
 
+    def _caminho(
+        self, pontos: list[tuple[float, float]], cor: str, esp: float, tag: str = ""
+    ) -> None:
+        """Um traco inteiro como UMA linha, com pontas e juntas redondas.
+
+        Desenhar segmento por segmento deixava "dentes" nas curvas (cada
+        segmento termina reto) e custava um item de canvas por ponto.
+        """
+        if len(pontos) < 2:
+            return
+        coords = [v for p in pontos for v in p]
+        self.canvas.create_line(
+            *coords,
+            fill=cor,
+            width=esp,
+            capstyle=tk.ROUND,
+            joinstyle=tk.ROUND,
+            tags=(tag,) if tag else (),
+        )
+
+    def segmento(
+        self, a: tuple[float, float], b: tuple[float, float], cor: str, esp: float
+    ) -> None:
+        """Desenha NA HORA um pedaco do traco em andamento, em pixel.
+
+        E o que faz o pincel responder ao mouse. Antes o traco so aparecia no
+        proximo quadro do laco, e desenhar parecia arrastar. O quadro seguinte
+        apaga tudo e redesenha o traco inteiro a partir da prancheta, entao
+        nao sobra lixo.
+        """
+        self._caminho([a, b], cor, esp, tag="andamento")
+
     def _texto(self, it: Label) -> None:
-        """Texto com contorno preto.
+        """Texto com contorno escuro.
 
         Sem isso, texto claro sobre o rio ou sobre a base azul some. O contorno
         por deslocamento e feio de perto e perfeitamente legivel em movimento,
         que e a unica condicao em que alguem vai ler isto.
+
+        A cor-chave e quase preta (scene.COR_TRANSPARENTE): o antisserrilhado
+        do Windows mistura a borda da letra com a cor de fundo, e com a chave
+        magenta antiga toda letra ganhava uma franja rosa.
         """
         f = self._fonte(it.size, it.bold)
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
@@ -250,8 +319,42 @@ class OverlayWindow:
         self.canvas.create_text(it.x, it.y, text=it.text, fill=it.color, font=f, anchor=it.anchor)
 
     # ----------------------------------------------------------------
-    # Modo desenho
+    # A lousa: pincel e digitacao
     # ----------------------------------------------------------------
+
+    _EVENTOS_DA_LOUSA = (
+        "<ButtonPress-1>",
+        "<B1-Motion>",
+        "<ButtonRelease-1>",
+        "<ButtonPress-3>",
+        "<KeyPress>",
+    )
+
+    def _soltar_lousa(self) -> None:
+        for evento in self._EVENTOS_DA_LOUSA:
+            self.lousa.unbind(evento)
+        if self._lousa_visivel:
+            self.lousa.withdraw()
+            self._lousa_visivel = False
+
+    def _prender_lousa(self) -> None:
+        """Mostra a lousa por baixo do overlay e da a ela o teclado."""
+        if self._rect is not None:
+            r = self._rect
+            self.lousa.geometry(f"{int(r.w)}x{int(r.h)}+{int(r.x)}+{int(r.y)}")
+        if not self._lousa_visivel:
+            self.lousa.deiconify()
+            self._lousa_visivel = True
+        self.lousa.attributes("-topmost", True)
+        self.lousa.update_idletasks()
+        # O overlay precisa ficar POR CIMA da lousa, senao o traco fica atras
+        # dela. Os dois sao topmost; vale quem foi reafirmado por ultimo.
+        if self._hwnd:
+            win.raise_topmost(self._hwnd)
+        with contextlib.suppress(tk.TclError):
+            self.lousa.focus_force()
+        if self._hwnd_lousa:
+            win.activate(self._hwnd_lousa)
 
     def modo_desenho(
         self,
@@ -261,86 +364,38 @@ class OverlayWindow:
         ao_mover: Callable[[float, float], None] | None = None,
         ao_soltar: Callable[[], None] | None = None,
         ao_teclar: Callable[[str], None] | None = None,
+        ao_desfazer: Callable[[], None] | None = None,
     ) -> None:
-        """Liga o pincel: a janela para de atravessar o clique e passa a ouvir.
+        """Liga o pincel: a lousa passa a ouvir o mouse e o teclado.
 
         As coordenadas chegam ao chamador em FRACAO da janela, e nao em pixel.
         Converter aqui, no unico lugar que conhece o tamanho real, evita que a
         logica do pincel precise saber de resolucao — e e o que faz um desenho
         sobreviver a abrir o replay noutra tela.
         """
-        if not self._hwnd:
-            return
-        win.set_click_through(self._hwnd, not ligado)
-        self.superficie_interativa(ligado)
+        self._soltar_lousa()
         if not ligado:
-            for evento in (
-                "<Button-1>",
-                "<B1-Motion>",
-                "<ButtonRelease-1>",
-                "<Key>",
-                "<KeyPress>",
-            ):
-                self.canvas.unbind(evento)
-                self.root.unbind(evento)
-            self.root.unbind_all("<KeyPress>")
-            self.root.unbind_all("<Button-1>")
-            self.root.unbind_all("<B1-Motion>")
-            self.root.unbind_all("<ButtonRelease-1>")
-            with contextlib.suppress(tk.TclError):
-                self.canvas.grab_release()
-            self.canvas.configure(cursor="")
             return
-
-        self.canvas.configure(cursor="crosshair")
-        # Foco de verdade: sem ele as teclas de cor nao chegam.
-        self.root.attributes("-topmost", True)
-        with contextlib.suppress(tk.TclError):
-            self.root.focus_force()
-        win.activate(self._hwnd)
+        self.lousa.configure(cursor="crosshair")
 
         def fracao(e: tk.Event[tk.Misc]) -> tuple[float, float]:
-            larg = max(1, self.canvas.winfo_width())
-            alt = max(1, self.canvas.winfo_height())
+            larg = max(1, self.lousa.winfo_width())
+            alt = max(1, self.lousa.winfo_height())
             return e.x / larg, e.y / alt
 
         if ao_comecar is not None:
-            def comecar(e: tk.Event[tk.Misc]) -> str:
-                self.canvas.focus_set()
-                win.activate(self._hwnd)
-                with contextlib.suppress(tk.TclError):
-                    self.canvas.grab_set()
-                ao_comecar(*fracao(e))
-                return "break"
-
-            self.root.bind_all("<Button-1>", comecar, add="+")
+            self.lousa.bind("<ButtonPress-1>", lambda e: ao_comecar(*fracao(e)))
         if ao_mover is not None:
-            self.root.bind_all(
-                "<B1-Motion>",
-                lambda e: (ao_mover(*fracao(e)), "break")[1],
-                add="+",
-            )
+            self.lousa.bind("<B1-Motion>", lambda e: ao_mover(*fracao(e)))
         if ao_soltar is not None:
-            def soltar(e: tk.Event[tk.Misc]) -> str:
-                ao_soltar()
-                with contextlib.suppress(tk.TclError):
-                    self.canvas.grab_release()
-                return "break"
-
-            self.root.bind_all(
-                "<ButtonRelease-1>",
-                soltar,
-                add="+",
-            )
+            self.lousa.bind("<ButtonRelease-1>", lambda e: ao_soltar())
+        if ao_desfazer is not None:
+            # Botao direito desfaz: e o gesto que a mao ja faz no mouse, sem
+            # tirar o olho do replay para achar a tecla Z.
+            self.lousa.bind("<ButtonPress-3>", lambda e: ao_desfazer())
         if ao_teclar is not None:
-            def teclar(e: tk.Event[tk.Misc]) -> str:
-                ao_teclar(e.keysym)
-                return "break"
-
-            # bind_all cobre o caso em que o Windows devolve o foco ao League
-            # depois do primeiro arrasto. O "break" impede C/Z/X de chegarem
-            # ao jogo.
-            self.root.bind_all("<KeyPress>", teclar, add="+")
+            self.lousa.bind("<KeyPress>", lambda e: ao_teclar(e.keysym))
+        self._prender_lousa()
 
     def modo_digitacao(
         self,
@@ -348,7 +403,7 @@ class OverlayWindow:
         *,
         ao_digitar: Callable[[str, str], None] | None = None,
     ) -> None:
-        """Liga a digitacao: a janela recebe o teclado e monta um texto.
+        """Liga a digitacao: a lousa recebe o teclado e monta um texto.
 
         Entrega `char` E `keysym` ao chamador, porque os dois respondem
         perguntas diferentes: `char` e o caractere de verdade, ja com shift e
@@ -356,21 +411,13 @@ class OverlayWindow:
         e o unico jeito de distinguir Enter de BackSpace de Escape, que nao
         produzem caractere nenhum.
         """
-        if not self._hwnd:
-            return
-        win.set_click_through(self._hwnd, not ligado)
+        self._soltar_lousa()
         if not ligado:
-            self.root.unbind("<Key>")
             return
-
-        # Sem foco de verdade, nenhuma tecla chega — a janela e
-        # WS_EX_NOACTIVATE justamente para nao roubar foco no uso normal.
-        self.root.attributes("-topmost", True)
-        with contextlib.suppress(tk.TclError):
-            self.root.focus_force()
-        win.activate(self._hwnd)
+        self.lousa.configure(cursor="xterm")
         if ao_digitar is not None:
-            self.root.bind("<Key>", lambda e: ao_digitar(e.char or "", e.keysym))
+            self.lousa.bind("<KeyPress>", lambda e: ao_digitar(e.char or "", e.keysym))
+        self._prender_lousa()
 
     def bombear(self) -> None:
         """Deixa o tkinter respirar sem entregar o controle do laco."""

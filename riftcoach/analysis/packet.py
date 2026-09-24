@@ -51,6 +51,12 @@ class EvidencePacket:
     blunders: list[Blunder] = field(default_factory=list)
     patch_notes: list[str] = field(default_factory=list)
     resolver: facts_render.NameResolver | None = None
+    # Build/runas/matchup contra a amostra do servidor e a composicao inimiga
+    # (analysis/build.py). Vazio quando nao ha banco de patch para os nomes.
+    build_block: str = ""
+    # A versao curta, sem os kits, para o passe unico: ele roda perto do teto
+    # de tokens por minuto e a versao completa o fazia ser recusado inteiro.
+    build_block_curto: str = ""
 
     # ------------------------------------------------------------------
     # Blocos
@@ -104,7 +110,15 @@ class EvidencePacket:
         return summarize_benchmarks(self.benchmarks).strip()
 
     def _pvpa_block(self) -> str:
-        """Checklist de macro que orienta o modelo sem inventar telemetria."""
+        """Checklist de macro, JA avaliado pelo papel do jogador.
+
+        A versao anterior mandava, para qualquer papel, "smite_do_jogador=nao" e
+        "contagem de campeoes nao esta disponivel" em cada objetivo — e o modelo
+        repetia isso no relatorio de uma ADC. Agora vai o papel, os vivos de
+        cada lado, a participacao medida e um veredito (analysis/objetivos.py).
+        """
+        from riftcoach.analysis.objetivos import revisar, texto_para_ia
+
         linhas = [
             "FRAMEWORK PVPA PARA DECISOES DE OBJETIVO:",
             "  1. PRESSAO: a wave precisa estar empurrada ou estabilizada antes de sair.",
@@ -113,23 +127,13 @@ class EvidencePacket:
             "  4. ACAO: so entao lutar, invadir, fazer o objetivo, resetar ou rotacionar.",
             "Use os sinais medidos abaixo. Nao trate PVPA como prova de intencao.",
         ]
-        for o in self.facts.objectives:
-            if o.kind not in {"DRAGON", "BARON_NASHOR", "RIFTHERALD", "HORDE"}:
-                continue
-            distancia = (
-                f"{o.focus_player_distance_u}u do objetivo"
-                if o.focus_player_distance_u is not None
-                else "distancia nao disponivel"
-            )
-            smite = "sim" if 11 in self.facts.summoners else "nao"
-            linhas.append(
-                f"  {o.t} {o.kind}: wave={o.focus_wave_proxy}; {distancia}; "
-                f"ouro_time={o.team_gold_diff_at:+d}; "
-                f"suas_wards_60s={o.wards_placed_60s_before}; smite_do_jogador={smite}; "
-                "vida/mana, contagem exata de campeoes proximos, itens no instante e "
-                "intencao do jungler nao estao disponiveis nesta timeline."
-            )
-        return "\n".join(linhas)
+        revisao = texto_para_ia(revisar(self.facts))
+        return "\n".join(linhas) + ("\n" + revisao if revisao else "")
+
+    def _papel_block(self) -> str:
+        from riftcoach.analysis.objetivos import papel_para_ia
+
+        return papel_para_ia(self.facts.focus.position or "MIDDLE")
 
     # ------------------------------------------------------------------
     # Montagem
@@ -138,10 +142,12 @@ class EvidencePacket:
     def for_analyst(self, analyst: str) -> str:
         """A fatia de um analista. ~1,0 a 1,4k tokens."""
         partes = [
+            self._papel_block(),
             facts_render.render_for_analyst(self.facts, analyst, self.resolver).strip(),
             self._measured_block(),
             self._benchmark_block() if analyst in ("laning", "economy") else "",
             self._patch_block() if analyst == "economy" else "",
+            self.build_block if analyst in ("laning", "economy") else "",
             self._pvpa_block() if analyst in ("macro", "fights") else "",
         ]
         return "\n\n".join(p for p in partes if p)
@@ -158,11 +164,19 @@ class EvidencePacket:
         concatenar duplicaria metade do pacote. `render` sem filtro ja entrega
         o conjunto uma vez so.
         """
+        # Sem a secao OBJETIVOS crua: o bloco PVPA ja traz cada objetivo epico
+        # com o veredito por papel, e as estruturas cabem numa linha. Com as
+        # duas, este passe pedia 7.405 tokens contra um teto de 8.000/min e o
+        # Groq recusava a chamada inteira.
+        secoes = tuple(x for x in facts_render.Section if x is not facts_render.Section.OBJECTIVES)
         partes = [
-            facts_render.render(self.facts, None, self.resolver).strip(),
+            self._papel_block(),
+            facts_render.render(self.facts, secoes, self.resolver).strip(),
+            _estruturas(self.facts),
             self._measured_block(),
             self._benchmark_block(),
             self._patch_block(),
+            self.build_block_curto,
             self._pvpa_block(),
         ]
         return "\n\n".join(p for p in partes if p)
@@ -190,6 +204,29 @@ class EvidencePacket:
                 )
             blocos.append("\n".join(linhas))
         return "\n\n".join(b for b in blocos if b)
+
+
+def _estruturas(facts: MatchFacts) -> str:
+    """Torres e inibidores de cada lado, numa linha."""
+    nossas = [o for o in facts.objectives if o.kind == "TOWER_BUILDING" and o.taken_by_focus_team]
+    deles = [
+        o for o in facts.objectives if o.kind == "TOWER_BUILDING" and not o.taken_by_focus_team
+    ]
+    inib_n = sum(
+        1 for o in facts.objectives if o.kind == "INHIBITOR_BUILDING" and o.taken_by_focus_team
+    )
+    inib_d = sum(
+        1 for o in facts.objectives if o.kind == "INHIBITOR_BUILDING" and not o.taken_by_focus_team
+    )
+    primeira = min((*nossas, *deles), key=lambda o: o.t_ms, default=None)
+    quem = ""
+    if primeira is not None:
+        lado = "seu time" if primeira.taken_by_focus_team else "inimigo"
+        quem = f"; primeira torre: {lado} em {primeira.t}"
+    return (
+        f"ESTRUTURAS: torres derrubadas pelo seu time {len(nossas)}, pelo inimigo {len(deles)}; "
+        f"inibidores {inib_n} x {inib_d}{quem}"
+    )
 
 
 def build_patch_notes(facts: MatchFacts, resolver: facts_render.NameResolver | None) -> list[str]:
@@ -220,6 +257,7 @@ def build_packet(
     rule_findings: list[Finding],
     blunders: list[Blunder],
     resolver: facts_render.NameResolver | None = None,
+    build_block: str = "",
 ) -> EvidencePacket:
     return EvidencePacket(
         facts=facts,
@@ -228,4 +266,5 @@ def build_packet(
         blunders=blunders,
         patch_notes=build_patch_notes(facts, resolver),
         resolver=resolver,
+        build_block=build_block,
     )

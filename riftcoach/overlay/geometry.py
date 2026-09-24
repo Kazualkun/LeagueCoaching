@@ -60,14 +60,25 @@ TURRET_RANGE_U = 775.0
 # --------------------------------------------------------------------------
 
 # Em fracao da altura, no mesmo formato dos outros ROIs, para acompanhar
-# qualquer resolucao. Conferencia em 1600x900: dx=dy=16 px, 199x200 px.
+# qualquer resolucao.
+#
+# REMEDIDO pelas torres (overlay/calibrar.py), e a medida antiga estava ~9%
+# pequena. Ela achava a borda da TEXTURA do mapa por saturacao (199 px,
+# margem de 16); so que os limites do mundo caem na caixa preta de fora,
+# alguns pixels alem da textura. Ajustando as 22 torres por minimos
+# quadrados, em 1600x900, dois prints de patches diferentes concordam em
+# 1-2 px: caixa de ~217 px, a 8 px da direita e 11 px da base. O "VOCE" do
+# minimapa ficava ate ~10 px (uns 700 unidades) deslocado para o centro.
+#
+# Esta e a caixa PADRAO. Ao abrir, o overlay remede na tela da pessoa, porque
+# escala de HUD de replay e tamanho de minimapa de espectador mudam tudo.
 MINIMAP_MAP_AREA = Roi(
     "minimap_map_area",
     Anchor.BOTTOM_RIGHT,
-    dx=16 / 900,
-    dy=16 / 900,
-    w=199 / 900,
-    h=200 / 900,
+    dx=7.8 / 900,
+    dy=10.9 / 900,
+    w=216.8 / 900,
+    h=216.8 / 900,
 )
 
 

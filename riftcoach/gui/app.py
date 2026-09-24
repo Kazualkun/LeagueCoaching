@@ -21,13 +21,13 @@ import os
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 import webbrowser
-import time
-from urllib.parse import urlencode
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, cast
+from urllib.parse import urlencode
 
 from riftcoach.config import PLATFORM_TO_ROUTING, load_prefs, save_pref, settings
 from riftcoach.core.errors import RiftCoachError
@@ -472,23 +472,45 @@ class App:
 
         area = tk.Frame(self.corpo, bg=FUNDO_CARTAO, padx=18, pady=16)
         area.pack(fill="x", pady=(18, 0))
-        tk.Label(area, text="Partidas recentes", bg=FUNDO_CARTAO, fg=TEXTO,
-                 font=fonte(10, negrito=True)).pack(anchor="w")
-        lista = tk.Listbox(area, height=7, width=78, bg=FUNDO, fg=TEXTO,
-                           selectbackground=BORDA, relief="flat", highlightthickness=0)
+        tk.Label(
+            area, text="Partidas recentes", bg=FUNDO_CARTAO, fg=TEXTO, font=fonte(10, negrito=True)
+        ).pack(anchor="w")
+        lista = tk.Listbox(
+            area,
+            height=7,
+            width=78,
+            bg=FUNDO,
+            fg=TEXTO,
+            selectbackground=BORDA,
+            relief="flat",
+            highlightthickness=0,
+        )
         lista.pack(fill="x", pady=(8, 8))
-        status = tk.Label(area, text="Aguarde, buscando suas partidas...",
-                          bg=FUNDO_CARTAO, fg=TEXTO_FRACO, font=fonte(9))
+        status = tk.Label(
+            area,
+            text="Aguarde, buscando suas partidas...",
+            bg=FUNDO_CARTAO,
+            fg=TEXTO_FRACO,
+            font=fonte(9),
+        )
         status.pack(anchor="w")
         filtros = tk.Frame(area, bg=FUNDO_CARTAO)
         filtros.pack(anchor="w", pady=(8, 0))
         filtro = tk.StringVar(value="todas")
         candidatos: list[dict[str, Any]] = []
         for valor, texto in (("todas", "Todas"), ("solo", "Solo/Duo"), ("flex", "Flex")):
-            tk.Radiobutton(filtros, text=texto, value=valor, variable=filtro,
-                           command=lambda: preencher(), bg=FUNDO_CARTAO, fg=TEXTO,
-                           selectcolor=FUNDO, activebackground=FUNDO_CARTAO,
-                           activeforeground=TEXTO).pack(side="left", padx=(0, 10))
+            tk.Radiobutton(
+                filtros,
+                text=texto,
+                value=valor,
+                variable=filtro,
+                command=lambda: preencher(),
+                bg=FUNDO_CARTAO,
+                fg=TEXTO,
+                selectcolor=FUNDO,
+                activebackground=FUNDO_CARTAO,
+                activeforeground=TEXTO,
+            ).pack(side="left", padx=(0, 10))
 
         def visiveis() -> list[dict[str, Any]]:
             if filtro.get() == "todas":
@@ -532,11 +554,13 @@ class App:
 
         async def buscar() -> list[dict[str, Any]]:
             from riftcoach.riot.client import RiotClient
+
             nome, _, tag = rid.partition("#")
             async with RiotClient() as rc:
                 conta = await rc.account_by_riot_id(nome.strip(), tag.strip())
                 ids = await rc.match_ids(conta["puuid"], count=20)
                 import asyncio as _asyncio
+
                 partidas = await _asyncio.gather(*(rc.match(mid) for mid in ids))
             out = []
             for mid, partida in zip(ids, partidas, strict=True):
@@ -550,11 +574,18 @@ class App:
                 )
                 fila = "solo" if fila_id == 420 else "flex"
                 data = info.get("gameStartTimestamp", 0)
-                quando = time.strftime("%d/%m %H:%M", time.localtime(data / 1000)) if data else "data?"
+                quando = (
+                    time.strftime("%d/%m %H:%M", time.localtime(data / 1000)) if data else "data?"
+                )
                 resultado = "vitória" if participante.get("win") else "derrota"
-                out.append({"id": mid, "fila": fila,
-                            "texto": f"{quando} · {'Solo/Duo' if fila == 'solo' else 'Flex'} · "
-                                     f"{participante.get('championName', '?')} · {resultado}"})
+                out.append(
+                    {
+                        "id": mid,
+                        "fila": fila,
+                        "texto": f"{quando} · {'Solo/Duo' if fila == 'solo' else 'Flex'} · "
+                        f"{participante.get('championName', '?')} · {resultado}",
+                    }
+                )
             return out
 
         def pronto(r: Resultado) -> None:
@@ -620,6 +651,7 @@ class App:
 
             async def trabalhar() -> Any:
                 from riftcoach.overlay.prepare import preparar
+
                 return await preparar(rid, match_id=escolhido["id"], use_ai=True)
 
             def terminou(resultado: Resultado) -> None:
@@ -672,6 +704,16 @@ class App:
             self._abrir_overlay,
         )
 
+        self._opcao(
+            "Estatísticas do patch (matchup, runas e itens)",
+            "Coleta partidas ranqueadas dos melhores do servidor com a sua chave da "
+            "Riot. É daí que o relatório tira a taxa de vitória do matchup e compara "
+            "suas runas e itens com os deles. Uns 5 minutos; pode repetir para "
+            "aumentar a amostra.",
+            "Atualizar estatísticas",
+            self._atualizar_meta,
+        )
+
         Botao(
             self.corpo,
             "Analisar outra partida",
@@ -679,6 +721,37 @@ class App:
             principal=False,
         ).pack(anchor="w", pady=(16, 0))
         self._dizer("pode fechar esta janela quando terminar", TEXTO_FRACO)
+
+    def _atualizar_meta(self) -> None:
+        """Coleta ~200 partidas do patch atual em segundo plano.
+
+        200 cabe em ~5 minutos no limite de uma chave pessoal (100 pedidos a
+        cada 2 minutos). Cada clique soma na mesma base; a amostra cresce.
+        """
+        self._dizer("coletando estatísticas do patch... (uns 5 minutos)")
+
+        async def coletar_agora() -> Any:
+            from riftcoach.knowledge.coleta import coletar, semear_do_cache
+            from riftcoach.knowledge.meta import MetaDB
+            from riftcoach.riot.client import RiotClient
+
+            meta = MetaDB()
+            async with RiotClient() as rc:
+                await semear_do_cache(rc, meta)
+                novas = await coletar(rc, meta, alvo=200, log=lambda _m: None)
+            return novas, meta.partidas()
+
+        def terminou(r: Resultado) -> None:
+            if r.ok and r.dados:
+                novas, total = r.dados
+                self._dizer(
+                    f"{novas} partidas novas — {total} na base. Reabra o relatório para ver.",
+                    SUCESSO,
+                )
+            else:
+                self._dizer(f"não consegui coletar: {r.erro}", ERRO)
+
+        self._tarefa(coletar_agora, terminou)
 
     def _opcao(self, nome: str, explicacao: str, rotulo: str, acao: Callable[[], None]) -> None:
         c = tk.Frame(self.corpo, bg=FUNDO_CARTAO, padx=18, pady=15)

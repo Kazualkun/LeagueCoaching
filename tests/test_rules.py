@@ -133,10 +133,10 @@ def test_seek_lands_before_the_moment(garen: MatchFacts) -> None:
 
 
 def test_blunder_findings_quote_the_measured_cost(garen: MatchFacts) -> None:
-    medidos = [f for f in _all_findings(garen) if "custou" in f.claim]
+    medidos = [f for f in _all_findings(garen) if "probabilidade de vitoria caiu" in f.claim]
     assert medidos, "o motor de vantagem nao produziu nenhum finding"
     for f in medidos:
-        assert "pp" in f.claim
+        assert "pontos" in f.claim
         assert any("probabilidade de vitoria" in e.statement for e in f.evidence)
 
 

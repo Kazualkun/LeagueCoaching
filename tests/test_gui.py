@@ -111,7 +111,9 @@ def test_a_tela_de_analise_pede_a_tarefa(app: App) -> None:
     app.estado.riot_id = "Fulano#BR1"
     app.tela_partida()
     assert app._passo == 2
-    assert app.pedidos == ["trabalhar"]  # type: ignore[attr-defined]
+    # A tela agora LISTA as partidas recentes primeiro (a pessoa escolhe qual
+    # analisar, inclusive Flex); a analise so comeca depois da escolha.
+    assert app.pedidos == ["buscar"]  # type: ignore[attr-defined]
 
 
 def test_falha_na_analise_vira_tela_de_erro_com_saidas(app: App) -> None:

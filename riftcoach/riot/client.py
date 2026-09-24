@@ -251,14 +251,32 @@ class RiotClient:
         """
         return await self._get(self._url(f"/lol/match/v5/matches/by-puuid/{puuid}/replays"))
 
-    async def match(self, match_id: str) -> dict[str, Any]:
-        """match-v5. Imutavel -> cache permanente."""
+    async def match(self, match_id: str, *, guardar: bool = True) -> dict[str, Any]:
+        """match-v5. Imutavel -> cache permanente.
+
+        `guardar=False` e para a coleta de estatisticas (knowledge/coleta.py):
+        milhares de partidas de terceiros, lidas uma vez e agregadas, nao
+        tem por que ocupar o cache das partidas da propria pessoa.
+        """
         key = ck.key_match(self.routing, match_id)
         if (hit := await self.cache.get(key)) is not None:
             return dict(hit)
         data = await self._get(self._url(f"/lol/match/v5/matches/{match_id}"))
-        await self.cache.put(key, data)
+        if guardar:
+            await self.cache.put(key, data)
         return dict(data)
+
+    async def apex_league(self, tier: str, queue: str = "RANKED_SOLO_5x5") -> list[dict[str, Any]]:
+        """league-v4 das ligas de topo: challenger, grandmaster ou master.
+
+        As entradas ja trazem `puuid`. E a semente da coleta de estatisticas:
+        os melhores jogadores do servidor, de onde vem a "build recomendada".
+        NAO cacheado: a liga muda a cada partida.
+        """
+        if tier not in ("challenger", "grandmaster", "master"):
+            raise ValueError(f"liga de topo desconhecida: {tier}")
+        data = await self._get(self._platform_url(f"/lol/league/v4/{tier}leagues/by-queue/{queue}"))
+        return list(data.get("entries", []))
 
     async def platform_status(self) -> dict[str, Any]:
         """lol-status-v4. Nao exige parametro nenhum — e o teste mais limpo de

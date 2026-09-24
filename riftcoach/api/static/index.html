@@ -91,6 +91,45 @@
   }
   .marker { cursor: pointer; }
   .marker:hover circle { r: 6; }
+  .umarker { cursor: pointer; }
+  .umarker:hover path { stroke: #fff; stroke-width: 1.5; }
+  .curve svg { cursor: crosshair; }
+  .curve-legend {
+    display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  .curve-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px;
+    vertical-align: -1px; border-radius: 2px; }
+
+  /* ---- objetivos ---- */
+  .obj {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--sev2); border-radius: 4px;
+    padding: 12px 16px; margin-bottom: 10px;
+  }
+  .obj.bom { border-left-color: var(--win); }
+  .obj.ruim { border-left-color: var(--sev5); }
+  .obj.incerto { border-left-color: var(--ink-faint); }
+  .obj .ohead { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+  .obj .oname { font-family: system-ui, "Segoe UI", sans-serif; font-size: 15px;
+    font-weight: 650; color: var(--ink); }
+  .obj .who { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  .obj .who.nosso { color: var(--win); }
+  .obj .who.deles { color: var(--loss); }
+  .obj .duty { font-size: 11px; border: 1px solid var(--line); border-radius: 3px;
+    padding: 1px 6px; }
+  .obj .verdict { font-size: 14.5px; margin: 8px 0 8px; }
+  .obj ul { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 3px; }
+  .obj li { font-size: 13px; color: var(--ink-dim); }
+  .obj li b { color: var(--ink-faint); font-weight: 600; margin-right: 6px; }
+  .obj li.bom::before, .obj li.ruim::before, .obj li.neutro::before, .obj li.incerto::before {
+    content: "●"; font-size: 9px; margin-right: 7px; vertical-align: 2px; }
+  .obj li.bom::before { color: var(--win); }
+  .obj li.ruim::before { color: var(--sev5); }
+  .obj li.neutro::before { color: var(--ink-faint); }
+  .obj li.incerto::before { color: #6b5c33; }
+  .obj.fora { opacity: .72; }
 
   /* ---- secoes ---- */
   h2 {
@@ -118,10 +157,12 @@
   .finding.user-mark.mark-objective { border-left-color: #c8a24a; background: #2b2517; }
   .finding.user-mark.mark-print { border-left-color: #e0803f; background: #2d2018; }
   .mark-kind { font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .mark-kind.note { color: #48b0d4; }
-  .mark-kind.question { color: #b084e8; }
-  .mark-kind.error, .mark-kind.critical { color: #ff6675; }
-  .mark-kind.good { color: #45b37a; }
+  /* mk-*, e nao o nome cru do tipo: a classe "note" colidia com o estilo
+     .note da pagina e o rotulo ANOTACAO virava uma caixa. */
+  .mark-kind.mk-note { color: #48b0d4; }
+  .mark-kind.mk-question { color: #b084e8; }
+  .mark-kind.mk-error, .mark-kind.mk-critical { color: #ff6675; }
+  .mark-kind.mk-good { color: #45b37a; }
   .mark-kind.objective { color: #c8a24a; }
   .mark-kind.print { color: #e0803f; }
 
@@ -312,7 +353,7 @@ function renderHead() {
     </div>
     <div class="meta">
       <span>${esc(d.match_id)}</span><span>patch ${esc(d.patch)}</span>
-      <span>${dur}</span><span>${esc(d.position)}</span>${ia}
+      <span>${dur}</span><span>${esc(d.role_label || d.position)}</span>${ia}
     </div>
     <div class="exportbar">
       <button onclick="salvarPDF()">Salvar relatório em PDF</button>
@@ -393,8 +434,38 @@ function renderCurve() {
       </g>`;
   }).join("");
 
+  // As SUAS marcacoes na mesma linha do tempo, embaixo: triangulo na cor do
+  // tipo. Antes so os erros da IA apareciam aqui, e uma anotacao feita no
+  // replay ou na pagina sumia no meio da lista la embaixo.
+  const tri = (px, cor) =>
+    `M${(px - 6).toFixed(1)},${H} L${(px + 6).toFixed(1)},${H} L${px.toFixed(1)},${H - 11} Z`;
+  const suas = REPORT.user_marks.map((m, i) => {
+    const px = (m.t_ms / totalMs) * W;
+    const cor = COR_MARCA[m.kind] || COR_MARCA.note;
+    return `<g class="umarker" onclick="event.stopPropagation(); irParaMarcacao(${i})">
+        <title>${esc(m.at)} — sua ${esc(NOME_MARCA[m.kind] || "anotação")}: ${esc(m.text)}</title>
+        <line x1="${px.toFixed(1)}" y1="0" x2="${px.toFixed(1)}" y2="${H}"
+              stroke="${cor}" stroke-width="1" opacity=".35" stroke-dasharray="3 3"/>
+        <path d="${tri(px, cor)}" fill="${cor}"/>
+      </g>`;
+  }).join("");
+  const prints = REPORT.screenshots.map((p, i) => {
+    const px = (p.t_ms / totalMs) * W;
+    return `<g class="umarker" onclick="event.stopPropagation(); irParaPrint(${i})">
+        <title>${esc(p.at)} — print da revisão</title>
+        <rect x="${(px - 4).toFixed(1)}" y="${H - 8}" width="8" height="8" fill="#e0803f"/>
+      </g>`;
+  }).join("");
+  const objetivos = REPORT.objective_review.map(o => {
+    const px = (o.t_ms / totalMs) * W;
+    const cor = o.ours ? "#45b37a" : "#e05260";
+    return `<g><title>${esc(o.at)} — ${esc(o.name)} (${o.ours ? "seu time" : "inimigo"})</title>
+        <rect x="${(px - 3).toFixed(1)}" y="0" width="6" height="6" rx="1" fill="${cor}"
+              opacity=".85"/></g>`;
+  }).join("");
+
   $("#curve").innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" id="curvasvg"
          aria-label="probabilidade de vitória por minuto">
       <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="#48b0d4" stop-opacity=".22"/>
@@ -404,11 +475,79 @@ function renderCurve() {
             stroke-dasharray="4 4"/>
       <path d="${area}" fill="url(#g)"/>
       <path d="${linha}" fill="none" stroke="#48b0d4" stroke-width="1.6"/>
-      ${marcas}
+      ${objetivos}${marcas}${prints}${suas}
     </svg>
     <div class="curve-label"><span>probabilidade de vitória · 0:00</span>
-      <span>50%</span><span>${Math.floor(REPORT.duration_s / 60)}min</span></div>`;
+      <span>50%</span><span>${Math.floor(REPORT.duration_s / 60)}min</span></div>
+    <div class="curve-legend">
+      <span><i style="background:#e05260;border-radius:50%"></i>erro da IA</span>
+      <span><i style="background:${COR_MARCA.note}"></i>suas marcações</span>
+      <span><i style="background:#e0803f"></i>prints</span>
+      <span><i style="background:#45b37a"></i>objetivo seu</span>
+      <span><i style="background:#e05260"></i>objetivo inimigo</span>
+      <span>· clique na curva para marcar aquele minuto</span>
+    </div>`;
+  // Clicar num ponto vazio da curva preenche o horario da nova marcacao.
+  $("#curvasvg").addEventListener("click", (ev) => {
+    const caixa = ev.currentTarget.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (ev.clientX - caixa.left) / caixa.width));
+    const campo = $("#marktime");
+    if (!campo) return;
+    campo.value = mmss(Math.round(frac * totalMs));
+    $("#marktext").focus();
+    $("#markmsg").textContent = `Marcando em ${campo.value}. Escreva e salve.`;
+  });
 }
+
+const CATEGORIA = {
+  wave: "wave", trading: "trocas", vision: "visão", recall: "recall", macro: "macro",
+  objective: "objetivos", positioning: "posicionamento", decision: "decisão",
+  tempo: "tempo", itemization: "itens", teamfight: "lutas", mechanics: "mecânica",
+};
+const COR_MARCA = {
+  note: "#0ac8b9", question: "#b48cff", error: "#e84057",
+  critical: "#ff4058", good: "#3ddc84",
+};
+const NOME_MARCA = {
+  question: "dúvida", error: "erro", critical: "erro crítico", good: "acerto", note: "anotação",
+};
+const mmss = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+// Aceita "12:34", "12m34", "754" (segundos) — ninguem pensa a partida em
+// segundos corridos, e o campo antigo so aceitava segundos.
+const lerTempo = (txt) => {
+  const t = String(txt || "").trim().replace(/[ms]/g, ":").replace(/:+$/, "");
+  if (!t) return NaN;
+  if (t.includes(":")) {
+    const [m, s] = t.split(":").map(Number);
+    return (m * 60 + (s || 0)) * 1000;
+  }
+  return Number(t) * 1000;
+};
+
+window.irParaMarcacao = function irParaMarcacao(i) {
+  document.getElementById("um" + i)?.scrollIntoView({ behavior: "smooth", block: "center" });
+};
+window.irParaPrint = function irParaPrint(i) {
+  document.getElementById("pr" + i)?.scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
+async function pularPara(tMs, alvoId) {
+  const msg = document.getElementById(alvoId);
+  if (msg) { msg.className = "seekmsg"; msg.textContent = "pulando…"; }
+  try {
+    const r = await fetch("/api/seek_at/" + Math.round(tMs), { method: "POST" });
+    const d = await r.json();
+    if (!msg) return;
+    if (r.ok) msg.textContent = `replay em ${d.at}`;
+    else { msg.className = "seekmsg err"; msg.textContent = d.error || "o client recusou"; }
+  } catch {
+    if (msg) { msg.className = "seekmsg err"; msg.textContent = "servidor não respondeu"; }
+  }
+}
+window.pularPara = pularPara;
 
 function renderBody() {
   const d = REPORT;
@@ -417,21 +556,31 @@ function renderBody() {
   html += `<h2>Suas marcações</h2>
     <div class="markbox">
       <div class="markrow">
-        <select id="markkind"><option value="note">Anotação</option><option value="question">Dúvida</option></select>
-        <input id="marktime" type="number" min="0" max="${Math.floor(d.duration_s)}" step="1" placeholder="tempo em segundos">
-        <input id="marktext" type="text" maxlength="600" placeholder="Escreva aqui o que percebeu ou quer entender">
+        <select id="markkind">
+          <option value="note">Anotação</option><option value="question">Dúvida</option>
+          <option value="error">Erro meu</option><option value="good">Acerto</option>
+        </select>
+        <input id="marktime" type="text" inputmode="numeric" placeholder="minuto (ex.: 14:32)">
+        <input id="marktext" type="text" maxlength="600" placeholder="Escreva aqui o que percebeu ou quer entender"
+               onkeydown="if(event.key==='Enter')salvarMarcacao()">
         <button onclick="salvarMarcacao()">Salvar</button>
       </div>
-      <div class="mark-legend">
-        <span class="mark-kind note">Anotação</span>
-        <span class="mark-kind question">Dúvida</span>
-        <span class="mark-kind error">Erro</span>
-        <span class="mark-kind good">Acerto</span>
-      </div>
-      <div class="markmsg" id="markmsg">Escreva no relatório, não sobre o jogo. O tempo é em segundos desde o início da partida.</div>
+      <div class="markmsg" id="markmsg">Dica: clique na curva acima para marcar aquele minuto. As marcações aparecem na curva, no replay (overlay) e aqui.</div>
     </div>`;
+  if (d.user_marks.length) {
+    html += d.user_marks.map((m, i) => `
+        <article class="finding user-mark mark-${esc(m.kind)}" id="um${i}">
+          <div class="fhead"><span class="cat mark-kind mk-${esc(m.kind)}">${esc(NOME_MARCA[m.kind] || "anotação")}</span>
+            <span>${esc(m.at)}</span></div>
+          <div class="claim">${esc(m.text)}</div>
+          <button class="seek" onclick="pularPara(${m.t_ms}, 'umm${i}')">▶ Assistir no replay</button>
+          <button class="ask" onclick="editarMarcacao(${i})">Editar texto</button>
+          <button class="ask" onclick="apagarMarcacao(${i})">Apagar</button>
+          <span class="seekmsg" id="umm${i}"></span>
+        </article>`).join("");
+  }
   if (!d.findings.length) {
-    html = `<div class="note">Nenhum erro acima do limiar nesta partida. Isso não quer
+    html += `<div class="note">Nenhum erro acima do limiar nesta partida. Isso não quer
       dizer que ela foi perfeita — quer dizer que a telemetria sozinha não enxergou
       nada grave.</div>`;
   } else {
@@ -447,52 +596,50 @@ function renderBody() {
         <span class="bsrc">${esc(b.source_label)}</span>
       </div>`).join("") + `</div>`;
   }
-  if (d.user_marks.length) {
-    html += `<div class="user-marks">` +
-      d.user_marks.map((m, i) => `
-        <article class="finding user-mark mark-${esc(m.kind)}">
-          <div class="fhead"><span class="cat mark-kind ${esc(m.kind)}">${esc({
-            question: "dúvida", error: "erro", critical: "erro crítico", good: "acerto",
-            note: "anotação"
-          }[m.kind] || "anotação")}</span>
-            <span>${esc(m.at)}</span></div>
-          <div class="claim">${esc(m.text)}</div>
-          <button class="ask" onclick="editarMarcacao(${i})">Editar texto</button>
-          <button class="ask" onclick="apagarMarcacao(${i})">Apagar</button>
-        </article>`).join("") + `</div>`;
-  }
+  if (d.build) html += renderBuild(d.build);
   if (d.objective_review.length) {
-    html += `<h2>Checklist dos objetivos</h2><div class="user-marks">` +
-      d.objective_review.map(o => `
-        <article class="finding user-mark mark-objective">
-          <div class="fhead"><span class="cat mark-kind objective">objetivo · ${esc(o.kind)}</span>
-            <span>${esc(o.at)} · ${esc(o.result)}</span></div>
-          <div class="claim">Pode lutar: ${esc(o.contest)} · ${esc(o.gold)}</div>
-          <div class="drill">Visão: ${esc(o.vision)} · Wave: ${esc(o.wave)} ·
-            ${esc(o.smite)} · Números: ${esc(o.numbers)} · Jungler: ${esc(o.jungler_intent)}</div>
-        </article>`).join("") + `</div>`;
+    const papel ={ principal: "objetivo seu", secundario: "você ajuda", fora: "não é do seu papel" };
+    html += `<h2>Objetivos, pelo seu papel (${esc(d.role_label || d.position)})</h2>` +
+      d.objective_review.map((o, i) => `
+        <article class="obj ${esc(o.tone)} ${o.role_duty === "fora" ? "fora" : ""}">
+          <div class="ohead">
+            <span>${esc(o.at)}</span><span class="oname">${esc(o.name)}</span>
+            <span class="who ${o.ours ? "nosso" : "deles"}">${o.ours ? "seu time" : "inimigo"}</span>
+            <span class="duty">${esc(papel[o.role_duty] || o.role_duty)}</span>
+          </div>
+          <div class="verdict">${esc(o.verdict)}</div>
+          <ul>${o.items.map(it => `<li class="${esc(it.tone)}"><b>${esc(it.label)}</b>${esc(it.text)}</li>`).join("")}</ul>
+          <button class="seek" onclick="pularPara(${Math.max(0, o.t_ms - 20000)}, 'om${i}')">▶ Ver a disputa no replay</button>
+          <span class="seekmsg" id="om${i}"></span>
+        </article>`).join("");
   }
 
   window.salvarMarcacao = async function salvarMarcacao() {
     const tipo = $("#markkind").value;
-    const tempo = Number($("#marktime").value);
+    const tMs = lerTempo($("#marktime").value);
     const texto = $("#marktext").value.trim();
     const msg = $("#markmsg");
-    if (!Number.isFinite(tempo) || tempo < 0 || !texto) {
-      msg.textContent = "Informe o tempo e escreva a anotação.";
+    if (!Number.isFinite(tMs) || tMs < 0 || !texto) {
+      msg.textContent = "Informe o minuto (ex.: 14:32) e escreva a anotação.";
+      return;
+    }
+    if (tMs > d.duration_s * 1000) {
+      msg.textContent = `A partida acabou em ${mmss(d.duration_s * 1000)}.`;
       return;
     }
     msg.textContent = "salvando…";
     const r = await fetch("/api/marks", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ t_ms: Math.round(tempo * 1000), kind: tipo, text: texto }),
+      body: JSON.stringify({ t_ms: Math.round(tMs), kind: tipo, text: texto }),
     });
     const data = await r.json();
     if (!r.ok) { msg.textContent = data.detail || "não foi possível salvar"; return; }
     REPORT.user_marks.push(data.mark);
+    REPORT.user_marks.sort((a, b) => a.t_ms - b.t_ms);
     $("#marktext").value = "";
-    msg.textContent = `${tipo === "question" ? "Dúvida" : "Anotação"} salva em ${data.mark.at}.`;
+    renderCurve();
     renderBody();
+    $("#markmsg").textContent = `${NOME_MARCA[tipo] || "Anotação"} salva em ${data.mark.at} — já aparece na curva e no overlay.`;
   };
   window.apagarFinding = async function apagarFinding(index, text, tMs) {
     if (!window.confirm("Apagar esta marcação do overlay e do relatório?")) return;
@@ -523,6 +670,7 @@ function renderBody() {
       return;
     }
     mark.text = texto.trim();
+    renderCurve();
     renderBody();
   };
   window.apagarMarcacao = async function apagarMarcacao(index) {
@@ -534,12 +682,13 @@ function renderBody() {
     });
     if (!r.ok) return;
     REPORT.user_marks.splice(index, 1);
+    renderCurve();
     renderBody();
   };
   if (d.screenshots.length) {
     html += `<h2>Prints da revisão</h2><div class="user-marks">` +
       d.screenshots.map((p, i) => `
-        <article class="finding user-mark mark-print">
+        <article class="finding user-mark mark-print" id="pr${i}">
           <div class="fhead"><span class="cat mark-kind print">print</span><span>${esc(p.at)}</span></div>
           <img src="${esc(p.path)}" alt="Print do replay em ${esc(p.at)}" style="max-width:100%">
           <button class="ask" onclick="apagarPrint(${i})">Apagar print</button>
@@ -551,6 +700,7 @@ function renderBody() {
     const r = await fetch(print.path, { method: "DELETE" });
     if (!r.ok) return;
     REPORT.screenshots.splice(index, 1);
+    renderCurve();
     renderBody();
   };
   html += `<h2>Procedência</h2><div class="note">` + (d.used_ai
@@ -560,6 +710,44 @@ function renderBody() {
        Nenhum modelo foi consultado e nenhum dado saiu daqui.`)
     + ` Patch ${esc(d.patch)}.</div>`;
   $("#body").innerHTML = html;
+}
+
+// Build, runas e matchup: o que VOCE fez ao lado do que os melhores do
+// servidor fazem com o mesmo campeao — sempre com a amostra a vista.
+function renderBuild(b) {
+  const amostra = (o) => o.games
+    ? `${o.wr}% vitória <small>(±${o.wr_margin}, ${o.games} partida${o.games === 1 ? "" : "s"})</small>`
+    : "sem partidas";
+  const linha = (o) => `
+    <div class="brow ${o.yours ? "strong" : ""}">
+      <span class="bname">${o.yours ? "✔ " : ""}${esc(o.name)}</span>
+      <span class="bnum">usado em ${o.pick}% · ${amostra(o)}</span>
+      <div class="bbar"><div class="bfill" style="width:${o.pick}%"></div></div>
+    </div>`;
+  const semAmostra = !b.champion_games;
+  let h = `<h2>Build, runas e matchup · ${esc(b.champion)}</h2>`;
+  h += `<div class="note">Comparado com <b>${esc(b.source)}</b>, patch ${esc(b.patches.join(" + "))}:
+    ${esc(b.champion)} neste papel tem ${esc(b.champion_wr)}.
+    ${semAmostra ? "Ainda não há partidas deste campeão na amostra — rode <code>riftcoach meta</code> para coletar." : ""}
+    ${b.champion_games && b.champion_games < 30 ? " Amostra pequena: trate como tendência." : ""}</div>`;
+  if (b.opponent) {
+    h += `<div class="brow" style="margin-top:8px"><span class="bname">Matchup contra <b>${esc(b.opponent)}</b></span>
+      <span class="bnum">${b.matchup_games ? esc(b.matchup) : "sem partidas na amostra"}
+      ${b.matchup_lane !== null && b.matchup_games >= 5 ? ` · venceu a rota em ${b.matchup_lane}%` : ""}</span></div>`;
+  }
+  h += `<h2>Runas — as suas: ${esc(b.runes_yours || "?")}</h2><div class="bench">`
+    + (b.runes_meta.length ? b.runes_meta.map(linha).join("") : `<div class="note">sem amostra</div>`)
+    + `</div>`;
+  h += `<h2>Itens — os seus: ${esc(b.items_yours.join(", ") || "?")}</h2><div class="bench">`
+    + (b.items_meta.length ? b.items_meta.map(linha).join("") : `<div class="note">sem amostra</div>`)
+    + `</div>`;
+  if (b.composition.length || b.notes.length) {
+    h += `<h2>Composição inimiga</h2><div class="note">`
+      + b.composition.map(c => `<div>${esc(c)}</div>`).join("")
+      + b.notes.map(n => `<div style="margin-top:6px;color:var(--ink)"><b>→</b> ${esc(n)}</div>`).join("")
+      + `</div>`;
+  }
+  return h;
 }
 
 function card(f, isTop) {
@@ -574,7 +762,7 @@ function card(f, isTop) {
         <span class="rank">#${f.index + 1}</span>
         <span class="sev">gravidade ${f.severity}</span>
         <span>${esc(f.at)}</span>
-        <span class="cat">${esc(f.category)}</span>
+        <span class="cat">${esc(CATEGORIA[f.category] || f.category)}</span>
       </div>
       <div class="claim">${esc(f.claim)}</div>
       <ul class="ev">${ev}</ul>
@@ -668,42 +856,6 @@ async function perguntar(i) {
       alvo.innerHTML = `<div class="answer err">${esc(motivo)}${esc(dica)}</div>`;
     }
 
-    window.falarPergunta = function falarPergunta(i) {
-      const campo = document.getElementById("i" + i);
-      const status = document.getElementById("vs" + i);
-      const botao = document.getElementById("v" + i);
-      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!Recognition) {
-        status.textContent = "Este navegador não oferece reconhecimento de voz. Digite a dúvida.";
-        return;
-      }
-      const reconhecimento = new Recognition();
-      reconhecimento.lang = "pt-BR";
-      reconhecimento.interimResults = false;
-      reconhecimento.continuous = false;
-      botao.disabled = true;
-      status.textContent = "Fale sua dúvida no microfone…";
-      reconhecimento.onresult = (evento) => {
-        const texto = evento.results[0][0].transcript;
-        campo.value = (campo.value ? campo.value + " " : "") + texto;
-        status.textContent = `Entendi: “${texto}”`;
-      };
-      reconhecimento.onerror = (evento) => {
-        const mensagens = {
-          "not-allowed": "O microfone foi bloqueado. Permita o acesso no navegador.",
-          "audio-capture": "Não encontrei um microfone disponível.",
-          "no-speech": "Não entendi nenhuma fala. Tente novamente ou digite.",
-        };
-        status.textContent = mensagens[evento.error] || "Não consegui ouvir. Digite a dúvida.";
-      };
-      reconhecimento.onend = () => { botao.disabled = false; };
-      try {
-        reconhecimento.start();
-      } catch {
-        botao.disabled = false;
-        status.textContent = "Não consegui iniciar o microfone. Digite a dúvida.";
-      }
-    };
   } catch {
     alvo.innerHTML = `<div class="answer err">o servidor não respondeu</div>`;
   } finally {
@@ -711,10 +863,62 @@ async function perguntar(i) {
   }
 }
 
+// Fora de perguntar(): antes ela so era definida DEPOIS da primeira
+// pergunta enviada, e o botao de microfone nao fazia nada ate la.
+window.falarPergunta = function falarPergunta(i) {
+    const campo = document.getElementById("i" + i);
+    const status = document.getElementById("vs" + i);
+    const botao = document.getElementById("v" + i);
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+      status.textContent = "Este navegador não oferece reconhecimento de voz. Digite a dúvida.";
+      return;
+    }
+    const reconhecimento = new Recognition();
+    reconhecimento.lang = "pt-BR";
+    reconhecimento.interimResults = false;
+    reconhecimento.continuous = false;
+    botao.disabled = true;
+    status.textContent = "Fale sua dúvida no microfone…";
+    reconhecimento.onresult = (evento) => {
+      const texto = evento.results[0][0].transcript;
+      campo.value = (campo.value ? campo.value + " " : "") + texto;
+      status.textContent = `Entendi: “${texto}”`;
+    };
+    reconhecimento.onerror = (evento) => {
+      const mensagens = {
+        "not-allowed": "O microfone foi bloqueado. Permita o acesso no navegador.",
+        "audio-capture": "Não encontrei um microfone disponível.",
+        "no-speech": "Não entendi nenhuma fala. Tente novamente ou digite.",
+      };
+      status.textContent = mensagens[evento.error] || "Não consegui ouvir. Digite a dúvida.";
+    };
+    reconhecimento.onend = () => { botao.disabled = false; };
+    try {
+      reconhecimento.start();
+    } catch {
+      botao.disabled = false;
+      status.textContent = "Não consegui iniciar o microfone. Digite a dúvida.";
+    }
+  };
+
 load();
-// Marcações feitas no overlay são gravadas por outro processo. Atualizar a
-// lista periodicamente elimina a instrução antiga de recarregar manualmente.
-setInterval(() => {
-  if (!document.querySelector(":focus")) load();
+// Marcacoes feitas no overlay sao gravadas por outro processo. A pagina so
+// pergunta a VERSAO do arquivo (barato) e recarrega quando ela muda — antes
+// recarregava tudo a cada 2 s, fechando caixas abertas no meio da leitura.
+let versaoDaRevisao = null;
+setInterval(async () => {
+  try {
+    const r = await fetch("/api/review/version");
+    const { version } = await r.json();
+    if (versaoDaRevisao !== null && version !== versaoDaRevisao) {
+      const digitando = document.activeElement && ["INPUT", "SELECT", "TEXTAREA"]
+        .includes(document.activeElement.tagName);
+      const perguntando = document.querySelector(".askbox.open");
+      if (!digitando && !perguntando) { versaoDaRevisao = version; load(); return; }
+      return;  // tenta de novo no proximo ciclo, sem perder a mudanca
+    }
+    versaoDaRevisao = version;
+  } catch {}
 }, 2000);
 </script>

@@ -178,6 +178,25 @@ def render_report(
     return "\n".join(linhas) + "\n"
 
 
+def analisar_build(
+    facts: MatchFacts, resolver: object, *, curto: bool = False
+) -> tuple[str, list[Finding]]:
+    """Build/runas/matchup/composicao (analysis/build.py), sem nunca derrubar
+    o relatorio: sem banco de patch (nomes) ou com o banco de estatisticas
+    com problema, o relatorio sai igual — so sem esta parte."""
+    from riftcoach.knowledge.sync import PatchDB
+
+    if not isinstance(resolver, PatchDB):
+        return "", []
+    try:
+        from riftcoach.analysis.build import analisar, texto_curto, texto_para_ia
+
+        b = analisar(facts, resolver)
+    except Exception:
+        return "", []
+    return texto_para_ia(b) if not curto else texto_curto(b), b.achados
+
+
 def analyze(
     facts: MatchFacts,
     tier: str | None = None,
@@ -193,6 +212,7 @@ def analyze(
     tabela = BenchmarkTable(patch=facts.patch, history=history)
     marks = tabela.evaluate(facts, tier)
     achados = run_rules(facts, table=tabela, tier=tier)
+    achados += analisar_build(facts, resolver)[1]
     report = build_report(facts, achados)
     return report, render_report(facts, report, marks, resolver)
 
@@ -224,6 +244,18 @@ async def analyze_with_ai(
     tabela = BenchmarkTable(patch=facts.patch, history=history)
     marks = tabela.evaluate(facts, tier)
     achados_regras = run_rules(facts, table=tabela, tier=tier)
+    bloco_build, achados_build = analisar_build(facts, patch_db or resolver)
+    bloco_curto = analisar_build(facts, patch_db or resolver, curto=True)[0]
+    achados_regras += achados_build
+    try:
+        from riftcoach.knowledge.kits import texto_dos_kits
+
+        kits = await texto_dos_kits(
+            facts.focus.champion, facts.opponent.champion if facts.opponent else None, facts.patch
+        )
+        bloco_build = "\n".join(b for b in (bloco_build, kits) if b)
+    except Exception:  # sem rede, o relatorio sai sem o kit — nunca sem relatorio
+        pass
     trace = AiTrace()
 
     if not router.available:
@@ -237,7 +269,9 @@ async def analyze_with_ai(
         rule_findings=achados_regras,
         blunders=find_blunders(facts),
         resolver=resolver,
+        build_block=bloco_build,
     )
+    packet.build_block_curto = bloco_curto
 
     analise = await run_analysts(router, packet)
     trace.failures = dict(analise.failures)

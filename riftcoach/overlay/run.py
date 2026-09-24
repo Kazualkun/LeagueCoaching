@@ -11,6 +11,15 @@ depois que o guard provou que a partida ja acabou. Sobrepor informacao a uma
 gravacao e a mesma coisa que um treinador desenhar por cima do video do jogo
 de domingo. Sobrepor a uma partida ao vivo seria outra coisa inteiramente — e
 o intertravamento torna essa outra coisa inalcancavel a partir daqui.
+
+DOIS RITMOS, e confundi-los era o motivo de o pincel parecer lento:
+
+  eventos   ~60 Hz   mouse, teclado e atalhos. Barato; e o que a mao sente.
+  quadro     10 Hz   relogio do client e redesenho completo da cena.
+
+Antes os dois andavam juntos a 10 Hz: um arrasto so era processado a cada
+100 ms, o traco so aparecia no quadro seguinte, e cada quadro ainda relia o
+JSON da revisao do disco. Desfazer e limpar esperavam a mesma fila.
 """
 
 from __future__ import annotations
@@ -24,16 +33,14 @@ from typing import Any
 
 from riftcoach.config import data_dir
 from riftcoach.core.errors import LiveGameRefused
-from riftcoach.core.review import add_user_mark, load_session, save_session
-from riftcoach.core.schema import ReviewScreenshot, ReviewSession
+from riftcoach.core.review import add_user_mark, load_session, save_session, session_path
+from riftcoach.core.schema import ReviewScreenshot, ReviewSession, Stroke
 from riftcoach.overlay import window as win
 from riftcoach.overlay.atalhos import (
     POR_CODIGO,
     TODOS,
     VK_AJUDA,
-    VK_ANOTAR,
     VK_CONTROL,
-    VK_DUVIDA,
     VK_MENU,
     VK_OCULTAR,
     VK_PERGUNTAR,
@@ -44,9 +51,9 @@ from riftcoach.overlay.atalhos import (
 )
 from riftcoach.overlay.caixa import CaixaDePergunta
 from riftcoach.overlay.desenho import Prancheta, apagar_ultimo, limpar_instante
-from riftcoach.overlay.geometry import Rect
+from riftcoach.overlay.geometry import Rect, minimap_rect
 from riftcoach.overlay.render import OverlayWindow
-from riftcoach.overlay.scene import OverlayState, build
+from riftcoach.overlay.scene import OverlayState, area_da_barra, build, paleta_do_pincel
 from riftcoach.replay.controller import ReplayController
 from riftcoach.replay.guard import open_guard
 
@@ -56,18 +63,42 @@ from riftcoach.replay.guard import open_guard
 # de novo.
 FPS = 10.0
 
-# Quantas leituras seguidas sem achar a janela do jogo antes de desistir.
-# Uma falha isolada acontece durante troca de resolucao; tres seguidas
-# significam que a pessoa fechou o League.
+# O ritmo dos EVENTOS: mouse, teclado, atalhos. Separado do FPS de proposito
+# (ver o cabecalho). 60 Hz e o que o olho percebe como imediato; no Windows o
+# timer do asyncio arredonda para ~16 ms, entao pedir mais nao entrega mais.
+EVENTOS_HZ = 60.0
+
+# Quantos quadros seguidos sem achar a janela do jogo antes de desistir.
 SUMICOS_ATE_SAIR = 30
+
+# Quantas recusas seguidas do guard antes de fechar. Uma recusa isolada
+# acontece enquanto o client processa um salto; trinta (3 s) significam que o
+# replay fechou. Na PRIMEIRA recusa o overlay ja some da tela: se o que abriu
+# no lugar for uma partida ao vivo, nada nosso pode ficar desenhado por cima.
+RECUSAS_ATE_SAIR = 30
 
 # De quanto em quanto tempo a posicao atual vai para o disco.
 GRAVA_POSICAO_S = 10.0
+
+# De quanto em quanto tempo o overlay confere se o relatorio web mexeu na
+# revisao (marcacao apagada, anotacao nova). So a DATA do arquivo e lida; o
+# arquivo so e relido quando ela muda.
+CONFERE_ARQUIVO_S = 1.5
 
 # Quanto tempo o cartao de apresentacao fica na tela. Contado em relogio de
 # PAREDE, nao no do replay: ele precisa sumir sozinho mesmo com o replay
 # pausado, que e exatamente como a maioria das pessoas abre o overlay.
 BOAS_VINDAS_S = 12.0
+
+# Depois de um atalho com o replay pausado, por quanto tempo uma despausa que
+# NAO pedimos e desfeita. Existe porque o League recebe a mesma tecla que o
+# overlay (a leitura do atalho e pelo estado do teclado, sem engolir nada), e
+# algumas combinacoes mexem no replay. O overlay nao consegue impedir a tecla
+# de chegar ao jogo — mas consegue devolver o replay ao estado em que estava.
+PROTEGE_PAUSA_S = 1.2
+
+# Com que frequencia tentar medir o minimapa na tela, ate conseguir.
+MEDE_MINIMAPA_S = 20.0
 
 
 # --------------------------------------------------------------------------
@@ -112,6 +143,81 @@ class _Teclas:
 
 
 # --------------------------------------------------------------------------
+# Gravacao fora do laco
+# --------------------------------------------------------------------------
+
+Operacao = Callable[[ReviewSession], None]
+
+
+class _Gravador:
+    """Grava a revisao numa tarefa de fundo, APLICANDO a mudanca a versao mais
+    nova do arquivo — e nao despejando a copia que esta na memoria.
+
+    A diferenca importa porque ha dois escritores: o overlay e o relatorio
+    web. Se o overlay gravasse a copia inteira dele, uma anotacao feita na
+    pagina entre duas conferencias seria apagada pela proxima gravacao da
+    posicao. Aplicando so a operacao (acrescentar este traco, mudar esta
+    posicao) em cima do que esta em disco, os dois lados convivem.
+
+    Uma gravacao de cada vez; operacoes que chegam no meio vao juntas na
+    seguinte. O laco nunca espera o disco.
+    """
+
+    def __init__(self, base: ReviewSession, log: Callable[[str], None]) -> None:
+        self._base = base
+        self._log = log
+        self._fila: list[Operacao] = []
+        self._tarefa: asyncio.Task[None] | None = None
+        # A versao que acabou de ir para o disco, e a data do arquivo depois
+        # dela — para o laco nao "descobrir" a propria gravacao como mudanca.
+        self.gravada: ReviewSession | None = None
+        self.mtime_conhecido: int = _mtime(base)
+        self.erro: str = ""
+
+    @property
+    def ocupado(self) -> bool:
+        return bool(self._fila) or (self._tarefa is not None and not self._tarefa.done())
+
+    def pedir(self, op: Operacao) -> None:
+        self._fila.append(op)
+        if self._tarefa is None or self._tarefa.done():
+            self._tarefa = asyncio.create_task(self._drenar())
+
+    async def _drenar(self) -> None:
+        while self._fila:
+            ops, self._fila = self._fila, []
+            base = self._base
+
+            def trabalho(ops: list[Operacao] = ops, base: ReviewSession = base) -> ReviewSession:
+                atual = load_session(base.match_id, base.puuid) or base.model_copy(deep=True)
+                for op in ops:
+                    op(atual)
+                save_session(atual)
+                return atual
+
+            try:
+                self.gravada = await asyncio.to_thread(trabalho)
+                self._base = self.gravada
+                self.mtime_conhecido = _mtime(self.gravada)
+                self.erro = ""
+            except (OSError, ValueError) as exc:
+                self.erro = str(exc) or exc.__class__.__name__
+                self._log(f"erro ao gravar a revisao: {self.erro}")
+
+    async def esperar(self) -> None:
+        while self._tarefa is not None and not self._tarefa.done():
+            with contextlib.suppress(Exception):
+                await self._tarefa
+
+
+def _mtime(rs: ReviewSession) -> int:
+    try:
+        return session_path(rs.match_id, rs.puuid).stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+# --------------------------------------------------------------------------
 
 
 @dataclass
@@ -145,17 +251,23 @@ async def executar(
         res.motivo = "o overlay so funciona no Windows"
         return res
 
-    cliente, guard = await open_guard()
+    instancia = win.InstanciaUnica()
+    if not instancia.adquirir():
+        res.motivo = "o overlay que ja estava aberto nao fechou a tempo"
+        return res
+    if instancia.substituiu:
+        log("fechei o overlay que ja estava aberto para abrir este")
+
     overlay: OverlayWindow | None = None
-    # A pergunta em curso. Fica fora do laco porque a resposta chega por uma
-    # tarefa de fundo: bloquear o laco esperando a IA congelaria o overlay por
-    # segundos — sem repintar, sem ouvir tecla — bem no meio de um replay
-    # rodando. Declarada antes do `try` porque o `finally` a cancela, e a
-    # calibracao pode falhar antes de o laco existir.
+    # Tarefas de fundo. Nenhuma conversa com o client acontece DENTRO do
+    # laco de eventos esperando resposta: pausar, pular e recalibrar levam de
+    # dezenas de ms a segundos, e o overlay congelava durante cada uma.
+    tarefas: set[asyncio.Task[Any]] = set()
     tarefa_da_pergunta: asyncio.Task[None] | None = None
-    tarefa_do_stroke: asyncio.Task[None] | None = None
-    tarefa_da_pausa: asyncio.Task[None] | None = None
+    gravador: _Gravador | None = None
+    cliente = None
     try:
+        cliente, guard = await open_guard()
         ctrl = ReplayController(guard)
         cal = await ctrl.calibrate()
         log(f"replay sincronizado (defasagem de {cal.offset_s:+.2f}s)")
@@ -172,11 +284,19 @@ async def executar(
             )
             log(res.avisos[-1])
 
+        gravador = _Gravador(rs, log) if rs is not None else None
+
         teclas = _Teclas()
         oculto = False
         sumicos = 0
-        desde_gravou = 0.0
-        intervalo = 1.0 / max(1.0, fps)
+        recusas = 0
+        passo = 1.0 / EVENTOS_HZ
+        periodo_quadro = 1.0 / max(1.0, fps)
+        ultimo_quadro = 0.0
+        ultima_conferencia = time.monotonic()
+        ultima_posicao_gravada = time.monotonic()
+        ultima_medicao = -MEDE_MINIMAPA_S
+        minimapa_medido_em: tuple[int, int] | None = None
 
         # Onde a revisao anterior parou. Guardado ANTES do laco comecar, porque
         # o proprio laco vai sobrescrever `last_position_ms` no primeiro quadro
@@ -189,6 +309,18 @@ async def executar(
         if retomar_de:
             log(f"voce parou em {_mmss(retomar_de)} — Ctrl+Alt+R volta para la")
 
+        # O estado que o laco carrega entre um tique e outro.
+        agora_ms = 0
+        pausado = True
+        hwnd: int | None = None
+        rect: Rect | None = None
+        frente = False
+        sujo = True  # redesenhar no proximo tique, sem esperar o quadro
+        notificacao_ate = 0.0
+        protege_pausa_ate = 0.0
+        sair_do_pincel = False
+        painel_desenhado = False
+
         # O instante em que o pincel foi ligado. Os tracos ficam amarrados a
         # ELE, e nao ao relogio corrente: com o replay pausado os dois sao o
         # mesmo, mas se alguem despausar no meio do desenho a anotacao tem de
@@ -199,76 +331,165 @@ async def executar(
         # tem de falar do instante que ela estava olhando.
         instante_da_pergunta = 0
         instante_da_anotacao = 0
-        ultima_sync_s = 0.0
+
+        def em_fundo(coro: Awaitable[Any]) -> None:
+            t: asyncio.Task[Any] = asyncio.ensure_future(coro)
+            tarefas.add(t)
+            t.add_done_callback(tarefas.discard)
+
+        def notificar(texto: str, segundos: float = 2.5) -> None:
+            """Aviso curto, medido em relogio de PAREDE.
+
+            Antes o prazo era no relogio do replay — e com o replay pausado
+            (que e como se desenha e se anota) ele nunca vencia: "rabisco salvo"
+            ficava na tela a sessao inteira do pincel, cobrindo o jogo.
+            """
+            nonlocal notificacao_ate, sujo
+            st.notificacao = texto
+            st.notificacao_ate_ms = 1 << 62
+            notificacao_ate = time.monotonic() + segundos
+            sujo = True
+
+        async def pausar() -> None:
+            with contextlib.suppress(LiveGameRefused):
+                await ctrl.pause()
+
+        def proteger_pausa() -> None:
+            """Chamado a cada atalho: se o replay estava parado, ele continua
+            parado — ver PROTEGE_PAUSA_S."""
+            nonlocal protege_pausa_ate
+            if pausado:
+                protege_pausa_ate = time.monotonic() + PROTEGE_PAUSA_S
+
+        def atualizar_tracos() -> None:
+            if rs is None:
+                return
+            alvo = instante_do_pincel if st.modo_desenho else agora_ms
+            st.strokes = rs.strokes_em(alvo)
+
+        # ------------------------------------------------------------
+        # Pincel
+        # ------------------------------------------------------------
+
+        def px(p: tuple[float, float]) -> tuple[float, float]:
+            return p[0] * st.width, p[1] * st.height
 
         def ao_comecar(x: float, y: float) -> None:
-            # A faixa de cores fica no rodape. Como o canvas recebe os cliques
-            # agora, escolher uma cor por clique nao pode virar um traco curto
-            # no jogo. Os numeros continuam disponiveis como atalho.
-            if y >= 0.94:
-                indice = int((x - 0.12) / 0.019)
-                if 0 <= indice < 5 and prancheta.usar_cor(indice):
-                    return
+            nonlocal sujo
+            # A faixa de cores fica no rodape e recebe clique como botao, nao
+            # como lousa: escolher uma cor nao pode virar um traco curto.
+            xp, yp = x * st.width, y * st.height
+            if yp >= area_da_barra(st):
+                for cx, cy, raio, indice in paleta_do_pincel(st):
+                    if (xp - cx) ** 2 + (yp - cy) ** 2 <= raio**2 and prancheta.usar_cor(indice):
+                        sujo = True
+                        return
+                return
             prancheta.comecar(x, y)
 
         def ao_mover(x: float, y: float) -> None:
-            prancheta.mover(x, y)
+            antes = prancheta.ultimo
+            if antes is not None and prancheta.mover(x, y) and overlay is not None:
+                depois = prancheta.ultimo
+                assert depois is not None
+                overlay.segmento(px(antes), px(depois), prancheta.cor, prancheta.espessura)
 
         def ao_soltar() -> None:
-            nonlocal tarefa_do_stroke
+            nonlocal sujo
             traco = prancheta.terminar(instante_do_pincel)
-            if traco is None or rs is None:
+            sujo = True
+            if traco is None or rs is None or gravador is None:
                 prancheta.descartar()
                 return
-            # Primeiro atualiza a memoria e a tela. Gravar JSON no callback do
-            # mouse fazia o desenho sumir ate a escrita terminar.
+            # Primeiro a memoria e a tela; o disco vem numa tarefa de fundo.
             rs.strokes.append(traco)
-            st.strokes = rs.strokes_em(instante_do_pincel)
-            st.notificacao = "rabisco salvo no relatório"
-            st.notificacao_ate_ms = instante_do_pincel + 4_000
-            sessao = rs.model_copy(deep=True)
-            anterior = tarefa_do_stroke
+            atualizar_tracos()
+            gravador.pedir(lambda r, t=traco: r.strokes.append(t))
 
-            async def persistir(
-                anterior_task: asyncio.Task[None] | None,
-            ) -> None:
-                if anterior_task is not None:
-                    with contextlib.suppress(Exception):
-                        await anterior_task
-                try:
-                    await asyncio.to_thread(save_session, sessao)
-                except (OSError, ValueError) as exc:
-                    log(f"erro ao salvar rabisco: {exc}")
-                    st.notificacao = "erro ao salvar rabisco"
-                    st.notificacao_ate_ms = instante_do_pincel + 4_000
-
-            tarefa_do_stroke = asyncio.create_task(persistir(anterior))
-
-        def persistir_sessao_sem_bloquear() -> None:
-            """Grava uma cópia sem bloquear os atalhos do pincel."""
-            nonlocal tarefa_do_stroke
-            sessao = rs.model_copy(deep=True) if rs is not None else None
-            if sessao is None:
+        def desfazer() -> None:
+            nonlocal sujo
+            if rs is None or gravador is None:
                 return
-            anterior = tarefa_do_stroke
+            saiu = apagar_ultimo(rs.strokes, instante_do_pincel)
+            if saiu is None:
+                notificar("nada para desfazer neste instante")
+                return
+            atualizar_tracos()
+            sujo = True
 
-            async def persistir(anterior_task: asyncio.Task[None] | None) -> None:
-                if anterior_task is not None:
-                    with contextlib.suppress(Exception):
-                        await anterior_task
-                try:
-                    await asyncio.to_thread(save_session, sessao)
-                except (OSError, ValueError) as exc:
-                    log(f"erro ao salvar alteracao do pincel: {exc}")
-                    st.notificacao = "erro ao salvar alteração do pincel"
-                    st.notificacao_ate_ms = instante_do_pincel + 4_000
+            def op(r: ReviewSession, alvo: Stroke = saiu) -> None:
+                if alvo in r.strokes:
+                    r.strokes.remove(alvo)
 
-            tarefa_do_stroke = asyncio.create_task(persistir(anterior))
+            gravador.pedir(op)
+
+        def limpar() -> None:
+            if rs is None or gravador is None:
+                return
+            if not limpar_instante(rs.strokes, instante_do_pincel):
+                notificar("não há rabiscos neste instante")
+                return
+            atualizar_tracos()
+            notificar("rabiscos deste instante apagados")
+            t = instante_do_pincel
+            gravador.pedir(lambda r: limpar_instante(r.strokes, t) and None)
+
+        def ao_teclar(tecla: str) -> None:
+            nonlocal sujo, sair_do_pincel
+            if tecla.isdigit() and prancheta.usar_cor(int(tecla) - 1):
+                sujo = True
+            elif tecla.lower() == "z":
+                desfazer()
+            elif tecla.lower() == "c":
+                limpar()
+            elif tecla.lower() == "x":
+                prancheta.proxima_espessura()
+                sujo = True
+            elif tecla == "Escape":
+                sair_do_pincel = True
+
+        def ligar_pincel() -> None:
+            nonlocal instante_do_pincel, sujo
+            assert overlay is not None
+            st.modo_desenho = True
+            instante_do_pincel = agora_ms
+            atualizar_tracos()
+            # A superficie liga ANTES de falar com o client: a pausa pode
+            # demorar, e esperar por ela fazia o pincel parecer travado.
+            overlay.modo_desenho(
+                True,
+                ao_comecar=ao_comecar,
+                ao_mover=ao_mover,
+                ao_soltar=ao_soltar,
+                ao_teclar=ao_teclar,
+                ao_desfazer=desfazer,
+            )
+            em_fundo(pausar())
+            sujo = True
+            log(f"pincel ligado em {_mmss(instante_do_pincel)}")
+
+        def desligar_pincel() -> None:
+            nonlocal sujo
+            st.modo_desenho = False
+            prancheta.descartar()
+            if overlay is not None:
+                overlay.modo_desenho(False)
+            # Devolve o foco ao League: a lousa saiu da frente.
+            if hwnd is not None:
+                win.activate(hwnd)
+            atualizar_tracos()
+            sujo = True
+            log("pincel desligado")
+
+        # ------------------------------------------------------------
+        # Caixas de texto
+        # ------------------------------------------------------------
 
         caixa = CaixaDePergunta()
         caixa_de_anotacao = CaixaDePergunta()
 
         async def _buscar_resposta(texto: str, instante_ms: int) -> None:
+            nonlocal sujo
             assert perguntar is not None
             try:
                 st.resposta = await perguntar(texto, instante_ms)
@@ -279,12 +500,14 @@ async def executar(
                 st.resposta = f"nao consegui responder: {e}"
             finally:
                 st.pensando = False
+                sujo = True
 
         def fechar_pergunta() -> None:
             """Fecha os DOIS lados do modo: o estado que desenha e a janela
             que captura o teclado. Fechar so um deixaria o overlay comendo as
             teclas com a caixa ja invisivel — e sem caixa na tela, ninguem
             adivinha que precisa apertar Escape de novo."""
+            nonlocal sujo
             st.modo_pergunta = False
             # A resposta que chegasse depois de fechar apareceria na PROXIMA
             # caixa aberta, embaixo de outra pergunta, sobre outro instante.
@@ -292,27 +515,39 @@ async def executar(
                 tarefa_da_pergunta.cancel()
             if overlay is not None:
                 overlay.modo_digitacao(False)
+            if hwnd is not None:
+                win.activate(hwnd)
+            sujo = True
 
         def fechar_anotacao() -> None:
+            nonlocal sujo
             st.modo_anotacao = False
             caixa_de_anotacao.limpar()
             st.texto_da_anotacao = ""
             if overlay is not None:
                 overlay.modo_digitacao(False)
+            if hwnd is not None:
+                win.activate(hwnd)
+            sujo = True
 
         def ao_digitar(char: str, keysym: str) -> None:
-            nonlocal tarefa_da_pergunta
+            nonlocal tarefa_da_pergunta, sujo
+            sujo = True
             if st.modo_anotacao:
                 acao = caixa_de_anotacao.teclar(char, keysym)
                 if acao == "fechar":
                     fechar_anotacao()
                 elif acao == "enviar":
                     texto = caixa_de_anotacao.limpar()
-                    if texto and rs is not None:
-                        m = add_user_mark(rs, instante_da_anotacao, st.tipo_da_anotacao, texto)
+                    if texto and rs is not None and gravador is not None:
+                        m = add_user_mark(
+                            rs, instante_da_anotacao, st.tipo_da_anotacao, texto, gravar=False
+                        )
+                        gravador.pedir(lambda r, m=m: r.add(m))
                         st.marks = sorted([*st.marks, m], key=lambda x: x.t_ms)
                         res.marcas_do_usuario += 1
                         log(f"anotacao salva em {_mmss(instante_da_anotacao)}")
+                        notificar("anotação salva no relatório")
                     fechar_anotacao()
                 st.texto_da_anotacao = caixa_de_anotacao.texto
                 return
@@ -327,109 +562,209 @@ async def executar(
                 )
             st.texto_da_pergunta = caixa.texto
 
-        def ao_teclar(tecla: str) -> None:
-            if rs is None:
+        # ------------------------------------------------------------
+        # Tarefas que falam com o client
+        # ------------------------------------------------------------
+
+        async def navegar(alvo_ms: int) -> None:
+            nonlocal cal
+            try:
+                await ctrl.seek_to_ms(alvo_ms)
+            except LiveGameRefused as e:
+                log(f"nao consegui pular: {e.message}")
                 return
-            if tecla.isdigit() and prancheta.usar_cor(int(tecla) - 1):
+            # Depois de um salto o client reconstroi os dois relogios, com uma
+            # diferenca transitoria de alguns segundos. Recalibrar cedo demais
+            # grava um offset absurdo; entao espera, tenta, e mantem o antigo
+            # se nao assentar — ele continua quase certo.
+            for espera in (2.5, 2.0, 3.0):
+                await asyncio.sleep(espera)
+                try:
+                    cal = await ctrl.calibrate()
+                    return
+                except LiveGameRefused:
+                    continue
+
+        async def salvar_print(r: Rect, t_ms: int) -> None:
+            destino, erro = await asyncio.to_thread(_salvar_print, r, st.match_id, t_ms)
+            if destino and rs is not None and gravador is not None:
+                shot = ReviewScreenshot(t_ms=t_ms, path=destino)
+                rs.screenshots.append(shot)
+                gravador.pedir(lambda s, shot=shot: s.screenshots.append(shot))
+                notificar("print salvo no relatório")
+                log(f"print salvo em {destino}")
+            else:
+                if destino:
+                    erro = "sessão do relatório não está disponível"
+                notificar(f"erro ao salvar print: {erro}", 4.0)
+                log(f"erro ao salvar print: {erro}")
+
+        async def medir_minimapa(r: Rect) -> None:
+            """Remede a caixa do minimapa na tela, pelas torres.
+
+            Fora do laco porque custa meio segundo de Python puro. Falhar e
+            normal (minimapa coberto, poucas torres de pe): fica a caixa
+            padrao e tenta de novo mais tarde.
+            """
+            nonlocal minimapa_medido_em, sujo
+            try:
+                from PIL import ImageGrab
+
+                from riftcoach.overlay.calibrar import ajustar
+            except ImportError:
+                minimapa_medido_em = (int(r.w), int(r.h))  # sem PIL, nao insiste
                 return
-            if tecla.lower() == "z":
-                if apagar_ultimo(rs.strokes, instante_do_pincel) is not None:
-                    st.strokes = rs.strokes_em(instante_do_pincel)
-                    st.notificacao = "último rabisco apagado"
-                    st.notificacao_ate_ms = instante_do_pincel + 4_000
-                    persistir_sessao_sem_bloquear()
-            elif tecla.lower() == "c":
-                if limpar_instante(rs.strokes, instante_do_pincel):
-                    st.strokes = rs.strokes_em(instante_do_pincel)
-                    st.notificacao = "rabiscos apagados deste instante"
-                    st.notificacao_ate_ms = instante_do_pincel + 4_000
-                    persistir_sessao_sem_bloquear()
-                else:
-                    st.notificacao = "não há rabiscos neste instante"
-                    st.notificacao_ate_ms = instante_do_pincel + 4_000
-            elif tecla.lower() == "x":
-                prancheta.proxima_espessura()
-                st.notificacao = f"espessura: {prancheta.espessura:g}px"
-                st.notificacao_ate_ms = instante_do_pincel + 2_000
+            chute = minimap_rect(int(r.w), int(r.h), st.hud_scale)
+
+            def medir() -> Any:
+                img = ImageGrab.grab(
+                    bbox=(int(r.x), int(r.y), int(r.right), int(r.bottom)), all_screens=False
+                )
+                return ajustar(img, chute)
+
+            try:
+                medida = await asyncio.to_thread(medir)
+            except (OSError, ValueError):
+                return
+            if medida is None:
+                return
+            st.minimap_px = medida.rect
+            minimapa_medido_em = (int(r.w), int(r.h))
+            sujo = True
+            log(
+                f"minimapa medido na tela: {medida.rect.w:.0f}px em "
+                f"({medida.rect.x:.0f},{medida.rect.y:.0f}), {medida.torres} torres, "
+                f"erro {medida.residuo_px}px"
+            )
+
+        # ------------------------------------------------------------
+        # O laco
+        # ------------------------------------------------------------
 
         while True:
-            hwnd = win.find_league_window()
-            if hwnd is None:
-                sumicos += 1
-                if sumicos >= SUMICOS_ATE_SAIR:
-                    res.motivo = "a janela do League foi fechada"
-                    break
-                overlay.mostrar(False)
-                await asyncio.sleep(intervalo)
-                continue
-            sumicos = 0
+            if instancia.pediram_para_sair():
+                res.motivo = "outro overlay foi aberto no lugar deste"
+                break
 
-            rect = win.client_rect_on_screen(hwnd)
-            # O PROPRIO OVERLAY conta como "a pessoa esta no jogo". Sem
-            # isto ele se esconde por estar aparecendo: a janela dele vira a
-            # de primeiro plano, a pergunta "o jogo esta na frente?" responde
-            # nao, e o laco o retira da tela para sempre.
-            frente = win.is_foreground(hwnd, overlay.hwnd)
-            if rect is None or not frente or oculto:
+            agora_s = time.monotonic()
+            quadro = agora_s - ultimo_quadro >= periodo_quadro
+
+            if quadro:
+                ultimo_quadro = agora_s
+                hwnd = win.find_league_window()
+                if hwnd is None:
+                    sumicos += 1
+                    if sumicos >= SUMICOS_ATE_SAIR:
+                        res.motivo = "a janela do League foi fechada"
+                        break
+                    overlay.mostrar(False)
+                    await asyncio.sleep(periodo_quadro)
+                    continue
+                sumicos = 0
+                rect = win.client_rect_on_screen(hwnd)
+                # O PROPRIO OVERLAY (e a lousa) contam como "a pessoa esta no
+                # jogo". Sem isto ele se esconde por estar aparecendo.
+                frente = win.is_foreground(hwnd, *overlay.hwnds)
+
+            if rect is None or not frente or oculto or hwnd is None:
                 # Some junto com o jogo. Um overlay que continua flutuando por
                 # cima do navegador enquanto a pessoa le o relatorio e pior que
                 # nenhum overlay.
                 overlay.mostrar(False)
-                await asyncio.sleep(intervalo)
+                overlay.bombear()
                 if atalhos and frente and VK_OCULTAR in teclas.novas([VK_OCULTAR]):
                     oculto = not oculto
+                    sujo = True
+                await asyncio.sleep(passo)
                 continue
 
-            # A resolucao pode mudar no meio (alt-tab, troca de modo de tela).
-            # Os ROIs sao fracao da altura justamente para sobreviver a isso.
-            st.width, st.height = int(rect.w), int(rect.h)
-            overlay.cobrir(rect)
-            overlay.mostrar(True)
-            if not ja_apareceu:
-                ja_apareceu = True
-                # O relogio das boas-vindas so comeca a contar agora: antes
-                # disso ninguem estava olhando para a tela do jogo, e um
-                # cartao de apresentacao exibido para ninguem e o mesmo que
-                # nao ter cartao nenhum.
-                aberto_em = time.monotonic()
-                log(f"overlay na tela · {len(st.marks)} marcacoes")
+            if quadro:
+                if (int(rect.w), int(rect.h)) != (st.width, st.height):
+                    # A resolucao pode mudar no meio (alt-tab, troca de modo de
+                    # tela). Os ROIs sao fracao da altura para sobreviver a isso.
+                    st.width, st.height = int(rect.w), int(rect.h)
+                    st.minimap_px = None
+                    sujo = True
+                overlay.cobrir(rect)
+                overlay.mostrar(True)
+                if not ja_apareceu:
+                    ja_apareceu = True
+                    # O relogio das boas-vindas so comeca a contar agora: antes
+                    # disso ninguem estava olhando para a tela do jogo.
+                    aberto_em = agora_s
+                    log(f"overlay na tela · {len(st.marks)} marcacoes")
 
-            try:
-                pb = await guard.assert_replay_mode()
-            except LiveGameRefused as e:
-                res.motivo = f"o client parou de expor o replay: {e.message}"
-                break
+                if (
+                    minimapa_medido_em != (int(rect.w), int(rect.h))
+                    and agora_s - ultima_medicao >= MEDE_MINIMAPA_S
+                    and not st.modo_desenho
+                ):
+                    ultima_medicao = agora_s
+                    em_fundo(medir_minimapa(rect))
 
-            agora_ms = cal.to_timeline_ms(pb.time)
-            # A pausa do client pode chegar alguns frames depois da requisicao.
-            # Enquanto o pincel esta ativo, a cena precisa continuar presa ao
-            # instante escolhido; caso contrario os marcadores do mapa parecem
-            # andar enquanto o jogador desenha.
-            if st.modo_desenho:
-                agora_ms = instante_do_pincel
-            # Os desenhos deste instante. Com o pincel ligado o instante e o em
-            # que ele foi ligado — senao o traco sairia de cena enquanto ainda
-            # esta sendo feito.
-            alvo_dos_tracos = instante_do_pincel if st.modo_desenho else agora_ms
-            if (
-                rs is not None
-                and not st.modo_desenho
-                and time.monotonic() - ultima_sync_s >= 2.0
-            ):
-                st.strokes = rs.strokes_em(alvo_dos_tracos)
-            st.traco_em_andamento = prancheta.em_andamento
-            st.cor_do_pincel = prancheta.cor
-            st.espessura_do_pincel = prancheta.espessura
+                if not st.modo_desenho:
+                    # No pincel o replay ja esta pausado e a cena fica presa no
+                    # instante escolhido; perguntar o relogio ali so gastava
+                    # tempo do laco de eventos.
+                    try:
+                        pb = await guard.assert_replay_mode()
+                    except LiveGameRefused as e:
+                        recusas += 1
+                        overlay.mostrar(False)
+                        if recusas >= RECUSAS_ATE_SAIR:
+                            res.motivo = f"o client parou de expor o replay: {e.message}"
+                            break
+                        await asyncio.sleep(periodo_quadro)
+                        continue
+                    recusas = 0
+                    novo_ms = cal.to_timeline_ms(pb.time)
+                    if novo_ms != agora_ms:
+                        agora_ms = novo_ms
+                        sujo = True
+                    if not pb.paused and agora_s < protege_pausa_ate:
+                        protege_pausa_ate = 0.0
+                        em_fundo(pausar())
+                        log("o replay despausou junto com o atalho; pausei de novo")
+                    pausado = pb.paused
+                    atualizar_tracos()
 
-            # O painel aparece sozinho no comeco e sob demanda depois. No modo
-            # desenho ele sai da frente: a tela toda e a lousa.
-            painel = not (st.modo_desenho or st.modo_pergunta) and (
-                ajuda or (time.monotonic() - aberto_em) < BOAS_VINDAS_S
-            )
-            overlay.desenhar(build(st, agora_ms, boas_vindas=painel))
-            overlay.bombear()
-            res.quadros += 1
+                if st.notificacao and agora_s >= notificacao_ate:
+                    st.notificacao = ""
+                    sujo = True
 
+                if rs is not None and gravador is not None and not gravador.ocupado:
+                    if gravador.gravada is not None and gravador.gravada is not rs:
+                        # A gravacao juntou o que estava no disco com o que
+                        # fizemos aqui; ela passa a ser a versao de trabalho.
+                        rs = gravador.gravada
+                        gravador.gravada = None
+                    if agora_s - ultima_conferencia >= CONFERE_ARQUIVO_S:
+                        ultima_conferencia = agora_s
+                        if _mtime(rs) != gravador.mtime_conhecido:
+                            # O relatorio web mexeu na revisao (anotacao nova,
+                            # marcacao apagada). Relida SO quando o arquivo
+                            # muda — antes era relida dez vezes por segundo.
+                            atualizada = load_session(rs.match_id, rs.puuid)
+                            if atualizada is not None:
+                                rs = atualizada
+                                gravador.mtime_conhecido = _mtime(rs)
+                                st.marks = _com_lugares(rs.timeline(), st.marks)
+                                atualizar_tracos()
+                                sujo = True
+                    if (
+                        agora_s - ultima_posicao_gravada >= GRAVA_POSICAO_S
+                        and agora_ms != rs.last_position_ms
+                    ):
+                        ultima_posicao_gravada = agora_s
+                        rs.last_position_ms = agora_ms
+                        t_pos = agora_ms
+                        gravador.pedir(lambda r, t=t_pos: setattr(r, "last_position_ms", t))
+
+            if sair_do_pincel and st.modo_desenho:
+                sair_do_pincel = False
+                desligar_pincel()
+
+            # Atalhos, no ritmo dos eventos.
             if atalhos:
                 for vk in teclas.novas([a.vk for a in TODOS]):
                     atalho = POR_CODIGO[vk]
@@ -441,6 +776,9 @@ async def executar(
                         # da "/" e AltGr+E da "°" — sem este filtro, escrever a
                         # pergunta criaria marcacoes ou pularia o replay.
                         continue
+                    sujo = True
+                    if vk not in (VK_RETOMAR, VK_SEGUINTE):
+                        proteger_pausa()
                     if vk == VK_OCULTAR:
                         oculto = True
                     elif vk == VK_AJUDA:
@@ -449,131 +787,94 @@ async def executar(
                         # vinte nunca viu o cartao de apresentacao.
                         ajuda = not ajuda
                     elif vk == VK_PINCEL:
-                        st.modo_desenho = not st.modo_desenho
                         if st.modo_desenho:
-                            instante_do_pincel = agora_ms
-                            # Ativa a superficie antes da chamada ao client.
-                            # A API de pausa pode demorar; esperar aqui fazia
-                            # o pincel parecer travado ao ser aberto.
-                            overlay.modo_desenho(
-                                True,
-                                ao_comecar=ao_comecar,
-                                ao_mover=ao_mover,
-                                ao_soltar=ao_soltar,
-                                ao_teclar=ao_teclar,
-                            )
-                            async def pausar_replay() -> None:
-                                with contextlib.suppress(LiveGameRefused):
-                                    await ctrl.pause()
-
-                            tarefa_da_pausa = asyncio.create_task(pausar_replay())
-                            log(f"pincel ligado em {_mmss(instante_do_pincel)}")
+                            desligar_pincel()
                         else:
-                            prancheta.descartar()
-                            overlay.modo_desenho(False)
-                            # Devolve o foco ao League depois que o pincel
-                            # voltou a ser click-through.
-                            win.activate(hwnd)
-                            log("pincel desligado")
+                            if st.modo_pergunta:
+                                fechar_pergunta()
+                            if st.modo_anotacao:
+                                fechar_anotacao()
+                            ligar_pincel()
                     elif vk == VK_PERGUNTAR:
                         if perguntar is None:
-                            log("perguntar exige um provedor de IA configurado")
+                            notificar("perguntar exige um provedor de IA configurado", 4.0)
                             continue
-                        st.modo_pergunta = not st.modo_pergunta
                         if st.modo_pergunta:
-                            if st.modo_desenho:
-                                # Os dois modos disputam a mesma janela: cada
-                                # um liga o clique e prende o teclado do seu
-                                # jeito, e desligar um soltaria o do outro.
-                                st.modo_desenho = False
-                                prancheta.descartar()
-                                overlay.modo_desenho(False)
-                            instante_da_pergunta = agora_ms
-                            caixa.limpar()
-                            st.texto_da_pergunta = ""
-                            st.resposta = ""
-                            # PAUSA, pelo mesmo motivo do pincel: ninguem
-                            # digita uma pergunta enquanto o replay corre e o
-                            # momento que motivou a pergunta passa.
-                            with contextlib.suppress(LiveGameRefused):
-                                await ctrl.pause()
-                            overlay.modo_digitacao(True, ao_digitar=ao_digitar)
-                            log(f"pergunta aberta em {_mmss(instante_da_pergunta)}")
-                        else:
                             fechar_pergunta()
                             log("pergunta fechada")
+                            continue
+                        if st.modo_desenho:
+                            # Os dois modos disputam a mesma lousa: cada um
+                            # prende o teclado do seu jeito.
+                            desligar_pincel()
+                        st.modo_pergunta = True
+                        instante_da_pergunta = agora_ms
+                        caixa.limpar()
+                        st.texto_da_pergunta = ""
+                        st.resposta = ""
+                        # A caixa abre ANTES da pausa responder: esperar o
+                        # client aqui era o atraso que se sentia ao apertar.
+                        overlay.modo_digitacao(True, ao_digitar=ao_digitar)
+                        em_fundo(pausar())
+                        log(f"pergunta aberta em {_mmss(instante_da_pergunta)}")
                     elif atalho.marca is not None:
                         if st.modo_pergunta:
                             continue
-                        st.modo_anotacao = not st.modo_anotacao
                         if st.modo_anotacao:
-                            instante_da_anotacao = agora_ms
-                            st.tipo_da_anotacao = atalho.marca
-                            caixa_de_anotacao.limpar()
-                            st.texto_da_anotacao = ""
-                            with contextlib.suppress(LiveGameRefused):
-                                await ctrl.pause()
-                            overlay.modo_digitacao(True, ao_digitar=ao_digitar)
-                            log(f"anotacao aberta em {_mmss(instante_da_anotacao)}")
-                        else:
                             fechar_anotacao()
                             log("anotacao fechada")
+                            continue
+                        if st.modo_desenho:
+                            desligar_pincel()
+                        st.modo_anotacao = True
+                        instante_da_anotacao = agora_ms
+                        st.tipo_da_anotacao = atalho.marca
+                        caixa_de_anotacao.limpar()
+                        st.texto_da_anotacao = ""
+                        overlay.modo_digitacao(True, ao_digitar=ao_digitar)
+                        em_fundo(pausar())
+                        log(f"anotacao aberta em {_mmss(instante_da_anotacao)}")
                     elif vk == VK_PRINT:
-                        destino, erro = _salvar_print(rect, st.match_id, agora_ms)
-                        if destino and rs is not None:
-                            rs.screenshots.append(
-                                ReviewScreenshot(t_ms=agora_ms, path=destino)
-                            )
-                            try:
-                                save_session(rs)
-                            except (OSError, ValueError) as exc:
-                                rs.screenshots.pop()
-                                erro = str(exc) or "não foi possível atualizar o relatório"
-                                destino = None
-                        elif destino:
-                            erro = "sessão do relatório não está disponível"
-                        mensagem = (
-                            "print salvo no relatório"
-                            if destino and rs is not None
-                            else f"erro ao salvar print: {erro}"
+                        # Redesenha antes de fotografar: o print tem de sair com
+                        # o que esta na tela AGORA, inclusive o traco recem-feito.
+                        st.traco_em_andamento = prancheta.em_andamento
+                        overlay.desenhar(_cena(st, agora_ms, instante_do_pincel, False))
+                        overlay.bombear()
+                        em_fundo(
+                            salvar_print(rect, instante_do_pincel if st.modo_desenho else agora_ms)
                         )
-                        st.notificacao = mensagem
-                        st.notificacao_ate_ms = agora_ms + 4_000
-                        log(f"print salvo em {destino}" if destino else mensagem)
                     elif vk in (VK_RETOMAR, VK_SEGUINTE):
                         alvo = (
                             retomar_de if vk == VK_RETOMAR else _proxima_marca_depois(st, agora_ms)
                         )
                         if alvo is None:
-                            log("nao ha para onde pular a partir daqui")
+                            notificar("não há para onde pular a partir daqui")
                             continue
-                        await ctrl.seek_to_ms(alvo)
-                        # Depois de um seek o client pode reconstruir os dois
-                        # relógios com uma pequena diferença transitória.
-                        # Recalibrar aqui evita que todas as marcações
-                        # seguintes fiquem deslocadas pelo offset antigo.
-                        cal = await ctrl.calibrate()
+                        if st.modo_desenho:
+                            desligar_pincel()
+                        em_fundo(navegar(alvo))
                         log(f"pulando para {_mmss(alvo)}")
 
-            if rs is not None and not st.modo_desenho:
-                # O relatório web pode apagar marcações enquanto o replay
-                # continua aberto. Recarregar a sessão mantém os dois lados
-                # visualmente sincronizados.
-                atualizada = load_session(rs.match_id, rs.puuid)
-                if atualizada is not None:
-                    rs = atualizada
-                ultima_sync_s = time.monotonic()
-                # Gravar a posicao a cada quadro seria uma escrita em disco dez
-                # vezes por segundo. A cada ~10 s basta: o pior caso e a pessoa
-                # retomar 10 segundos antes de onde parou, que e onde ela
-                # provavelmente queria estar mesmo.
-                rs.last_position_ms = agora_ms
-                desde_gravou += intervalo
-                if desde_gravou >= GRAVA_POSICAO_S:
-                    desde_gravou = 0.0
-                    save_session(rs)
+            # O painel aparece sozinho no comeco e sob demanda depois. No modo
+            # desenho ele sai da frente: a tela toda e a lousa. Ele vence em
+            # relogio de PAREDE — o replay pausado nao marcaria a cena como
+            # suja, e o cartao ficaria na tela para sempre.
+            painel = not (st.modo_desenho or st.modo_pergunta or st.modo_anotacao) and (
+                ajuda or (agora_s - aberto_em) < BOAS_VINDAS_S
+            )
+            if painel != painel_desenhado:
+                sujo = True
+            if sujo:
+                sujo = False
+                painel_desenhado = painel
+                st.traco_em_andamento = prancheta.em_andamento
+                st.cor_do_pincel = prancheta.cor
+                st.espessura_do_pincel = prancheta.espessura
+                overlay.desenhar(_cena(st, agora_ms, instante_do_pincel, painel))
+                res.quadros += 1
 
-            await asyncio.sleep(intervalo)
+            overlay.bombear()
+            await asyncio.sleep(passo)
 
     except KeyboardInterrupt:
         res.motivo = "encerrado por voce"
@@ -584,17 +885,42 @@ async def executar(
             tarefa_da_pergunta.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await tarefa_da_pergunta
-        if tarefa_do_stroke is not None and not tarefa_do_stroke.done():
-            with contextlib.suppress(Exception):
-                await tarefa_do_stroke
-        if tarefa_da_pausa is not None and not tarefa_da_pausa.done():
-            with contextlib.suppress(Exception):
-                await tarefa_da_pausa
+        for t in list(tarefas):
+            if not t.done():
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.wait_for(t, timeout=3.0)
+        if gravador is not None:
+            await gravador.esperar()
         if overlay is not None:
             overlay.fechar()
-        with contextlib.suppress(Exception):
-            await cliente.aclose()
+        if cliente is not None:
+            with contextlib.suppress(Exception):
+                await cliente.aclose()
+        instancia.liberar()
     return res
+
+
+def _cena(st: OverlayState, agora_ms: int, instante_do_pincel: int, painel: bool) -> Any:
+    """No pincel a cena fica presa no instante em que ele foi ligado."""
+    return build(st, instante_do_pincel if st.modo_desenho else agora_ms, boas_vindas=painel)
+
+
+def _com_lugares(novas: list[Any], antigas: list[Any]) -> list[Any]:
+    """Marcacoes relidas do disco, sem perder o lugar no mapa das antigas.
+
+    `where`/`you` sao calculados ao abrir o overlay (precisam da timeline
+    crua). Uma marcacao que veio do disco sem eles, mas que o overlay ja tinha
+    posicionado, herda a posicao.
+    """
+    por_chave = {(m.t_ms, m.text): m for m in antigas}
+    for m in novas:
+        velha = por_chave.get((m.t_ms, m.text))
+        if velha is not None:
+            if m.where is None:
+                m.where = velha.where
+            if m.you is None:
+                m.you = velha.you
+    return novas
 
 
 # --------------------------------------------------------------------------

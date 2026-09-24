@@ -305,10 +305,11 @@ def test_a_regua_conta_quantos_erros_ja_passaram() -> None:
 
 def test_a_regua_tem_uma_divisao_a_cada_cinco_minutos() -> None:
     """Sem escala a faixa nao diz que representa tempo. Com ela, diz sozinha."""
+    from riftcoach.overlay.scene import COR_DIVISAO
     from riftcoach.overlay.scene import Line as SLine
 
     st = estado()  # 35 min -> divisoes em 5,10,15,20,25,30,35
-    divisoes = [i for i in build(st, 0).items if isinstance(i, SLine) and i.color == "#30363d"]
+    divisoes = [i for i in build(st, 0).items if isinstance(i, SLine) and i.color == COR_DIVISAO]
     assert len(divisoes) == 7
 
 

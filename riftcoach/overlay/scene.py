@@ -15,7 +15,6 @@ para o momento. A pessoa le, olha, e ve acontecer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import pairwise
 from typing import Literal
 
 from riftcoach.core.schema import Mark, MarkKind, Stroke
@@ -39,6 +38,10 @@ class Box:
     fill: Color | None = None
     outline: Color | None = None
     width: float = 1.0
+    # Painel "de vidro": o renderizador pontilha o fundo e o jogo aparece por
+    # tras. Caixa solida escura por cima do replay parecia um remendo colado
+    # na tela; pontilhada, parece parte da HUD.
+    translucido: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,7 +76,17 @@ class Label:
     anchor: Anchor = "nw"
 
 
-Primitive = Box | Circle | Line | Label
+@dataclass(frozen=True)
+class Path:
+    """Um traco inteiro (varios pontos), desenhado de uma vez com pontas
+    redondas. So os desenhos a mao usam — o resto do overlay e reto."""
+
+    points: list[tuple[float, float]]
+    color: Color = "#ffffff"
+    width: float = 3.0
+
+
+Primitive = Box | Circle | Line | Path | Label
 
 
 @dataclass
@@ -88,22 +101,34 @@ class Scene:
 # Paleta e tempos
 # --------------------------------------------------------------------------
 
+# A paleta segue a HUD do proprio League: fundo azul-noite, filete dourado,
+# texto creme. A versao anterior usava as cores de sistema do macOS (azul
+# #0a84ff, vermelho #ff453a...) — o azul era o MESMO dos aliados e o vermelho
+# o mesmo dos inimigos no minimapa, e os cartoes pareciam de outro programa
+# colado por cima do jogo.
+#
 # Cores por gravidade. Vermelho so para o que realmente custou a partida: se
 # tudo e vermelho, nada e vermelho, e a pessoa para de olhar.
-COR_CRITICO = "#ff453a"
-COR_ERRO = "#ff9f0a"
-COR_LEVE = "#ffd60a"
-COR_USUARIO = "#0a84ff"
-COR_PERGUNTA = "#bf5af0"
-COR_BOM = "#30d158"
-COR_FUNDO = "#0d1117"
-COR_TEXTO = "#e6edf3"
-COR_FRACO = "#8b949e"
+COR_CRITICO = "#e84057"
+COR_ERRO = "#f09a3e"
+COR_LEVE = "#e3c77a"
+# As marcacoes da pessoa em azul-hextech, e nao no azul do time aliado.
+COR_USUARIO = "#0ac8b9"
+COR_PERGUNTA = "#b48cff"
+COR_BOM = "#3ddc84"
+COR_FUNDO = "#010a13"
+COR_BORDA = "#785a28"
+COR_TEXTO = "#f0e6d2"
+COR_FRACO = "#a09b8c"
+COR_DIVISAO = "#5b5a56"
 
 # A cor de fundo da janela inteira, que o Windows torna invisivel. Precisa ser
-# uma cor que NAO apareca em nada que a gente desenhe — por isso este magenta
-# absurdo, e nao preto: preto e cor legitima de sombra e de contorno.
-COR_TRANSPARENTE = "#ff00ff"
+# uma cor que NAO apareca em nada que a gente desenhe, e e QUASE PRETA de
+# proposito: o Windows suaviza a borda de cada letra misturando-a com o fundo,
+# e com o magenta que ficava aqui todo texto ganhava uma franja rosa. Com a
+# chave quase preta a mistura vira sombra, que e o que o contorno ja e.
+# O contorno do texto e #000000, diferente desta, entao ele continua opaco.
+COR_TRANSPARENTE = "#010203"
 
 # O cartao entra junto com o seek e sai um pouco depois do momento.
 ANTES_MS = 8_000
@@ -180,6 +205,9 @@ class OverlayState:
     pensando: bool = False
     notificacao: str = ""
     notificacao_ate_ms: int = 0
+    # A caixa do minimapa MEDIDA na tela da pessoa (overlay/calibrar.py).
+    # None = usar a caixa padrao de geometry.py.
+    minimap_px: Rect | None = None
 
     @property
     def u(self) -> float:
@@ -216,20 +244,25 @@ def _regua(st: OverlayState, now_ms: int) -> list[Primitive]:
     if not st.show_ruler or st.duration_ms <= 0:
         return []
     u = st.u
-    alt = max(8.0, 0.016 * u)
+    # Mais fina que antes (era 1,6% da altura) e de vidro: uma faixa preta
+    # solida de ponta a ponta cortava a moldura do placar do espectador.
+    alt = max(6.0, 0.011 * u)
     larg_tela = float(st.width)
     fonte = max(8.0, 0.0115 * u)
 
     def x_de(t_ms: int) -> float:
         return larg_tela * min(1.0, max(0.0, t_ms / st.duration_ms))
 
-    out: list[Primitive] = [Box(Rect(0.0, 0.0, larg_tela, alt), fill="#0b0e14")]
+    out: list[Primitive] = [
+        Box(Rect(0.0, 0.0, larg_tela, alt), fill=COR_FUNDO, translucido=True),
+        Line(0.0, alt, larg_tela, alt, color=COR_BORDA, width=1.0),
+    ]
 
     # A escala: uma divisao a cada 5 minutos. Sem elas a faixa nao diz que
     # representa tempo; com elas, diz sozinha.
     for minuto in range(5, st.duration_ms // 60_000 + 1, 5):
         x = x_de(minuto * 60_000)
-        out.append(Line(x, alt * 0.45, x, alt, color="#30363d", width=1.0))
+        out.append(Line(x, alt * 0.45, x, alt, color=COR_DIVISAO, width=1.0))
 
     for m in st.marks:
         x = x_de(m.t_ms)
@@ -252,7 +285,7 @@ def _regua(st: OverlayState, now_ms: int) -> list[Primitive]:
             max(4.0, 0.004 * u),
             y_rotulo,
             "RIFTCOACH",
-            color=COR_FRACO,
+            color=COR_LEVE,
             size=fonte,
             bold=True,
         )
@@ -351,7 +384,10 @@ def _cartao(st: OverlayState, now_ms: int, m: Mark, indice: int) -> list[Primiti
     caixa = Rect(x0, y0, larg, altura)
 
     out: list[Primitive] = [
-        Box(caixa, fill=COR_FUNDO, outline=cor, width=max(1.5, 0.0022 * u)),
+        # Moldura dourada fina, como os paineis da HUD; a cor da gravidade fica
+        # so na faixa lateral e no titulo. Moldura inteira colorida competia
+        # com as barras de vida e os contornos de time do proprio jogo.
+        Box(caixa, fill=COR_FUNDO, outline=COR_BORDA, width=1.0, translucido=True),
         # Faixa lateral na cor da gravidade: identifica o cartao pela cor antes
         # de qualquer leitura.
         Box(Rect(x0, y0, max(3.0, 0.005 * u), altura), fill=cor),
@@ -387,7 +423,7 @@ def _cartao(st: OverlayState, now_ms: int, m: Mark, indice: int) -> list[Primiti
     falta = m.t_ms - now_ms
     barra_y = y0 + altura - pad * 1.15
     barra = Rect(tx, barra_y, larg - pad * 2, max(2.0, 0.003 * u))
-    out.append(Box(barra, fill="#30363d"))
+    out.append(Box(barra, fill=COR_DIVISAO))
     if falta > 0:
         frac = 1.0 - falta / ANTES_MS
         out.append(Box(Rect(tx, barra_y, barra.w * max(0.0, frac), barra.h), fill=cor))
@@ -442,17 +478,18 @@ def _notificacao(st: OverlayState, now_ms: int) -> list[Primitive]:
         return []
     return [
         Box(
-            Rect(st.width * 0.25, st.height * 0.08, st.width * 0.5, st.height * 0.07),
-            fill="#17202b",
-            outline="#58a6ff",
-            width=2.0,
+            Rect(st.width * 0.3, st.height * 0.08, st.width * 0.4, st.height * 0.055),
+            fill=COR_FUNDO,
+            outline=COR_BORDA,
+            width=1.0,
+            translucido=True,
         ),
         Label(
             st.width / 2,
-            st.height * 0.115,
+            st.height * 0.1075,
             st.notificacao,
             color=COR_TEXTO,
-            size=max(11.0, 0.018 * st.u),
+            size=max(10.0, 0.016 * st.u),
             bold=True,
             anchor="center",
         ),
@@ -501,11 +538,11 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
     caixa = Rect(x0, y0, larg, altura)
 
     out: list[Primitive] = [
-        Box(caixa, fill=COR_FUNDO, outline=COR_BOM, width=max(1.5, 0.0022 * u)),
-        Box(Rect(x0, y0, max(3.0, 0.005 * u), altura), fill=COR_BOM),
+        Box(caixa, fill=COR_FUNDO, outline=COR_BORDA, width=1.0, translucido=True),
+        Box(Rect(x0, y0, max(3.0, 0.005 * u), altura), fill=COR_LEVE),
     ]
     tx, ty = x0 + pad, y0 + pad
-    out.append(Label(tx, ty, "RIFTCOACH · AJUDA", color=COR_BOM, size=fonte, bold=True))
+    out.append(Label(tx, ty, "RIFTCOACH · AJUDA", color=COR_LEVE, size=fonte, bold=True))
     out.append(
         Label(
             x0 + larg - pad,
@@ -555,7 +592,7 @@ def _boas_vindas(st: OverlayState, now_ms: int) -> list[Primitive]:
                 x0 + larg - pad,
                 y0 + altura - pad * 0.7,
                 rodape,
-                color=COR_BOM,
+                color=COR_LEVE,
                 size=fonte * 0.88,
                 anchor="se",
             )
@@ -588,7 +625,8 @@ def _minimapa(st: OverlayState, m: Mark | None) -> list[Primitive]:
 
     u = st.u
     proj = MinimapProjector(
-        minimap_rect(st.width, st.height, st.hud_scale), rotated=st.minimap_rotated
+        st.minimap_px or minimap_rect(st.width, st.height, st.hud_scale),
+        rotated=st.minimap_rotated,
     )
     cor = cor_da_marca(m)
     fonte = max(8.0, 0.0125 * u)
@@ -630,9 +668,11 @@ def _minimapa(st: OverlayState, m: Mark | None) -> list[Primitive]:
         return (y - r - fonte * 0.2, "s") if preferir_abaixo else (y + r + fonte * 0.2, "n")
 
     if voce:
-        # Area, nao ponto. A posicao do jogador vem de um frame por minuto:
+        # Area, nao ponto — do tamanho da duvida. A posicao vem de ancoras de
+        # evento (parse/posicoes.py), com raio medido em unidades de mundo;
         # circulo pequeno fingiria uma precisao que o dado nao tem.
-        r = max(7.0, 0.014 * u)
+        minimo = max(7.0, 0.014 * u)
+        r = min(max(minimo, proj.units_to_px(m.you_err_u)), 0.06 * u) if m.you_err_u else minimo
         out.append(Circle(voce[0], voce[1], r, outline="#ffffff", width=max(1.5, 0.002 * u)))
         ly, anc = acima_ou_abaixo(voce[1], r, preferir_abaixo=False)
         out.append(
@@ -679,10 +719,7 @@ def _desenhos(st: OverlayState) -> list[Primitive]:
     largura, altura = float(st.width), float(st.height)
 
     def em_pixel(pontos: list[tuple[float, float]], cor: str, esp: float) -> None:
-        for (x1, y1), (x2, y2) in pairwise(pontos):
-            out.append(
-                Line(x1 * largura, y1 * altura, x2 * largura, y2 * altura, color=cor, width=esp)
-            )
+        out.append(Path([(x * largura, y * altura) for x, y in pontos], color=cor, width=esp))
 
     for s in st.strokes:
         em_pixel(list(s.points), s.color, s.width)
@@ -695,6 +732,39 @@ def _desenhos(st: OverlayState) -> list[Primitive]:
     return out
 
 
+def _medidas_da_barra(st: OverlayState) -> tuple[float, float, float]:
+    """(tamanho da fonte, altura da barra, y do topo) da barra do pincel."""
+    fonte = max(9.0, 0.016 * st.u)
+    alt = fonte * 2.6
+    return fonte, alt, st.height - alt
+
+
+def paleta_do_pincel(st: OverlayState) -> list[tuple[float, float, float, int]]:
+    """Onde fica cada bolinha de cor: (x, y, raio de clique, indice), em pixel.
+
+    UM lugar calcula isto, e tanto o desenho quanto o clique usam. Antes o
+    clique tinha a propria conta, com fracoes fixas que so batiam com a barra
+    numa tela 16:9 — em 21:9 o clique na cor virava um rabisco.
+    """
+    from riftcoach.overlay.desenho import CORES
+
+    fonte, alt, y = _medidas_da_barra(st)
+    meio = y + alt / 2
+    # 12 unidades de fonte: "PINCEL LIGADO" em negrito ocupa perto de 10, e
+    # com 9,5 as bolinhas de cor encostavam no texto.
+    x = 0.02 * st.width + fonte * 12.0
+    out: list[tuple[float, float, float, int]] = []
+    for i in range(len(CORES)):
+        out.append((x, meio, fonte * 1.05, i))
+        x += fonte * 2.1
+    return out
+
+
+def area_da_barra(st: OverlayState) -> float:
+    """O y a partir do qual o clique cai na barra do pincel, e nao no jogo."""
+    return _medidas_da_barra(st)[2]
+
+
 def _barra_do_pincel(st: OverlayState) -> list[Primitive]:
     """A faixa que aparece enquanto o pincel esta ligado.
 
@@ -702,46 +772,80 @@ def _barra_do_pincel(st: OverlayState) -> list[Primitive]:
     jogo, e alguem que nao perceba que entrou nele vai achar que o League
     travou.
     """
-    u = st.u
-    fonte = max(9.0, 0.016 * u)
-    alt = fonte * 2.6
-    y = st.height - alt
-    out: list[Primitive] = [
-        Box(Rect(0.0, y, float(st.width), alt), fill="#161b22", outline=COR_CRITICO, width=2.0)
-    ]
-    x = 0.02 * st.width
-    meio = y + alt / 2
-    out.append(
-        Label(x, meio, "PINCEL LIGADO", color=COR_CRITICO, size=fonte, bold=True, anchor="w")
-    )
-    # 12 unidades de fonte: "PINCEL LIGADO" em negrito ocupa perto de 10, e
-    # com 9,5 as bolinhas de cor encostavam no texto.
-    x += fonte * 12.0
-
     from riftcoach.overlay.desenho import CORES
 
-    for i, (cor, _) in enumerate(CORES):
-        r = fonte * (0.62 if cor != st.cor_do_pincel else 0.85)
+    fonte, alt, y = _medidas_da_barra(st)
+    out: list[Primitive] = [
+        Box(
+            Rect(0.0, y, float(st.width), alt),
+            fill=COR_FUNDO,
+            outline=COR_BORDA,
+            width=1.0,
+            translucido=True,
+        ),
+        Line(0.0, y, float(st.width), y, color=COR_CRITICO, width=2.0),
+    ]
+    meio = y + alt / 2
+    out.append(
+        Label(
+            0.02 * st.width,
+            meio,
+            "PINCEL LIGADO",
+            color=COR_CRITICO,
+            size=fonte,
+            bold=True,
+            anchor="w",
+        )
+    )
+
+    for x, cy, _raio, i in paleta_do_pincel(st):
+        cor = CORES[i][0]
+        escolhida = cor == st.cor_do_pincel
+        r = fonte * (0.62 if not escolhida else 0.85)
         out.append(
             Circle(
                 x,
-                meio,
+                cy,
                 r,
                 fill=cor,
-                outline="#ffffff" if cor == st.cor_do_pincel else "#000000",
+                outline="#ffffff" if escolhida else "#000000",
                 width=2.0,
             )
         )
         out.append(
-            Label(x, meio + fonte * 1.15, str(i + 1), color=COR_FRACO, size=fonte * 0.7, anchor="n")
+            Label(x, cy + fonte * 1.15, str(i + 1), color=COR_FRACO, size=fonte * 0.7, anchor="n")
         )
-        x += fonte * 2.1
+
+    # A espessura atual, desenhada: um numero em px nao diz nada a quem esta
+    # olhando o replay; um traco da grossura certa diz.
+    x_esp = paleta_do_pincel(st)[-1][0] + fonte * 2.4
+    esp = st.espessura_do_pincel or 4.0
+    out.append(
+        Line(
+            x_esp,
+            meio,
+            x_esp + fonte * 2.2,
+            meio,
+            color=st.cor_do_pincel or COR_CRITICO,
+            width=esp,
+        )
+    )
+    out.append(
+        Label(
+            x_esp + fonte * 1.1,
+            meio + fonte * 1.15,
+            "X",
+            color=COR_FRACO,
+            size=fonte * 0.7,
+            anchor="n",
+        )
+    )
 
     out.append(
         Label(
             float(st.width) - 0.02 * st.width,
             meio,
-            "arraste para desenhar  ·  Z desfaz  ·  C limpa  ·  Ctrl+Alt+D sai",
+            "arraste para desenhar  ·  botão direito ou Z desfaz  ·  C limpa  ·  Ctrl+Alt+D sai",
             color=COR_TEXTO,
             size=fonte * 0.8,
             anchor="e",
@@ -786,7 +890,14 @@ def _painel_da_pergunta(st: OverlayState) -> list[Primitive]:
     alt = fonte * 4.6 + alt_corpo
     y = st.height - alt
     out: list[Primitive] = [
-        Box(Rect(0.0, y, float(st.width), alt), fill=COR_FUNDO, outline=COR_PERGUNTA, width=2.0)
+        Box(
+            Rect(0.0, y, float(st.width), alt),
+            fill=COR_FUNDO,
+            outline=COR_BORDA,
+            width=1.0,
+            translucido=True,
+        ),
+        Line(0.0, y, float(st.width), y, color=COR_PERGUNTA, width=2.0),
     ]
 
     x = margem
@@ -865,7 +976,14 @@ def _painel_da_anotacao(st: OverlayState) -> list[Primitive]:
     alt = fonte * 4.0
     y = st.height - alt
     out: list[Primitive] = [
-        Box(Rect(0.0, y, float(st.width), alt), fill=COR_FUNDO, outline=COR_USUARIO, width=2.0),
+        Box(
+            Rect(0.0, y, float(st.width), alt),
+            fill=COR_FUNDO,
+            outline=COR_BORDA,
+            width=1.0,
+            translucido=True,
+        ),
+        Line(0.0, y, float(st.width), y, color=COR_USUARIO, width=2.0),
         Label(margem, y + fonte * 1.3, titulo, color=COR_USUARIO, size=fonte, bold=True),
         Label(
             margem + fonte * 10.0,

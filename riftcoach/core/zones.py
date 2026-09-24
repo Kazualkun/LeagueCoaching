@@ -248,3 +248,94 @@ def side_relative(zone: MapZone, team_id: int) -> str:
 def is_enemy_territory(zone: MapZone, team_id: int) -> bool:
     """Atalho para heuristicas de sobre-extensao."""
     return side_relative(zone, team_id).startswith("ENEMY_")
+
+
+# --------------------------------------------------------------------------
+# Para gente ler
+# --------------------------------------------------------------------------
+
+# O modelo recebe OWN_/ENEMY_ (e raciocina bem com isso); a PESSOA nao deveria
+# ler "NEUTRAL_BOT_LANE" num relatorio em portugues. Estas funcoes so traduzem
+# a mesma informacao — nao mudam o que foi medido.
+_ROTAS = {"TOP_LANE": "rota do topo", "MID_LANE": "rota do meio", "BOT_LANE": "rota de baixo"}
+_SELVAS = {"JUNGLE_TOPSIDE": "lado de cima", "JUNGLE_BOTSIDE": "lado de baixo"}
+_NEUTRAS = {
+    "TOP_RIVER": "rio de cima",
+    "BOT_RIVER": "rio de baixo",
+    "BARON_PIT": "fosso do Barão",
+    "DRAGON_PIT": "fosso do Dragão",
+    "UNKNOWN": "lugar desconhecido",
+    "?": "lugar desconhecido",
+}
+
+
+def zona_legivel(rel: str) -> str:
+    """'OWN_TOP_LANE' -> 'rota do topo, do seu lado'."""
+    if rel in _NEUTRAS:
+        return _NEUTRAS[rel]
+    if rel.startswith("NEUTRAL_"):
+        rota = _ROTAS.get(rel.removeprefix("NEUTRAL_"))
+        return f"meio da {rota}" if rota else rel
+    dono, _, resto = rel.partition("_")
+    lado = "do seu lado" if dono == "OWN" else "do lado inimigo" if dono == "ENEMY" else ""
+    if resto == "BASE":
+        return "sua base" if dono == "OWN" else "base inimiga"
+    if resto in _ROTAS:
+        return f"{_ROTAS[resto]}, {lado}".rstrip(", ")
+    if resto in _SELVAS:
+        dona = "sua selva" if dono == "OWN" else "selva inimiga"
+        return f"{dona} ({_SELVAS[resto]})"
+    return rel
+
+
+OBJETIVOS = {
+    "DRAGON": "Dragão",
+    "BARON_NASHOR": "Barão",
+    "RIFTHERALD": "Arauto",
+    "HORDE": "Vastilarvas",
+    "ATAKHAN": "Atakhan",
+    "ELDER_DRAGON": "Dragão Ancião",
+    "TOWER_BUILDING": "torre",
+    "INHIBITOR_BUILDING": "inibidor",
+}
+DRAGOES = {
+    "AIR_DRAGON": "Dragão das Nuvens",
+    "FIRE_DRAGON": "Dragão Infernal",
+    "WATER_DRAGON": "Dragão do Oceano",
+    "EARTH_DRAGON": "Dragão da Montanha",
+    "HEXTECH_DRAGON": "Dragão Hextec",
+    "CHEMTECH_DRAGON": "Dragão Quimtec",
+    "ELDER_DRAGON": "Dragão Ancião",
+}
+
+
+def objetivo_legivel(kind: str, subtype: str | None = None) -> str:
+    if kind == "DRAGON" and subtype in DRAGOES:
+        return DRAGOES[subtype]
+    return OBJETIVOS.get(kind, kind.replace("_", " ").lower())
+
+
+# Onde cada objetivo nasce. O lado do mapa decide QUEM tem obrigacao de
+# estar la — a ADC nao responde pelo Arauto, o topo nao responde pelo Dragao
+# da fase de rotas.
+LADO_DO_OBJETIVO = {
+    "DRAGON": "baixo",
+    "ELDER_DRAGON": "baixo",
+    "HORDE": "cima",
+    "RIFTHERALD": "cima",
+    "BARON_NASHOR": "cima",
+}
+
+
+def zona_com_preposicao(rel: str) -> str:
+    """'na rota do topo, do seu lado', 'no rio de baixo', 'na sua base'.
+
+    Para frases como "3 mortes aconteceram ___": com o nome sozinho saia
+    "aconteceram em meio da rota do meio".
+    """
+    nome = zona_legivel(rel)
+    if nome == "lugar desconhecido":
+        return "em lugar desconhecido"
+    if nome.startswith(("rota", "selva", "sua", "base")):
+        return f"na {nome}"
+    return f"no {nome}"  # rio, fosso, meio da rota

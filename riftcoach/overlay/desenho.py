@@ -97,6 +97,12 @@ class Prancheta:
     def em_andamento(self) -> list[tuple[float, float]]:
         return list(self._atual)
 
+    @property
+    def ultimo(self) -> tuple[float, float] | None:
+        """O ultimo ponto guardado. Quem desenha na hora liga este ponto ao
+        novo, sem copiar a lista inteira a cada evento do mouse."""
+        return self._atual[-1] if self._atual else None
+
     def descartar(self) -> None:
         self._atual = []
 

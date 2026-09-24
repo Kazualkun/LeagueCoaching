@@ -325,3 +325,63 @@ class PatchDB:
         if not row or not row[0]:
             return None
         return int(json.loads(row[0]).get("gold_total", 0)) or None
+
+
+# --------------------------------------------------------------------------
+# Classes de item — para comparar build com build
+# --------------------------------------------------------------------------
+
+
+def classes_de_itens(db: PatchDB, patch: str) -> dict[str, set[int]]:
+    """{'lendario': {...}, 'botas': {...}} a partir do item.json do patch.
+
+    Comparar a build da pessoa com a dos melhores so faz sentido item COMPLETO
+    contra item completo: componente e consumivel mudam de partida para
+    partida e nao dizem nada sobre escolha. O DataDragon nao marca "lendario";
+    o criterio e o que o jogo pratica — nao vira mais nada, custa pelo menos
+    2.000 e nao e consumivel nem acessorio. Botas a parte, porque toda build
+    tem uma.
+    """
+    import json
+    import sqlite3
+
+    with sqlite3.connect(db.path) as con:
+        linhas = con.execute(
+            "SELECT entity_id, data FROM entity WHERE kind='item' AND patch=? AND locale=?",
+            (patch, FALLBACK_LOCALE),
+        ).fetchall()
+        if not linhas:
+            linhas = con.execute(
+                "SELECT entity_id, data FROM entity WHERE kind='item' AND locale=? AND patch="
+                "(SELECT MAX(patch) FROM synced)",
+                (FALLBACK_LOCALE,),
+            ).fetchall()
+    out: dict[str, set[int]] = {"lendario": set(), "botas": set()}
+    for item_id, dados in linhas:
+        if not dados:
+            continue
+        d = json.loads(dados)
+        tags = set(d.get("tags", []))
+        if "Consumable" in tags or "Trinket" in tags:
+            continue
+        if "Boots" in tags and d.get("gold_total", 0) >= 900:
+            out["botas"].add(int(item_id))
+        elif not d.get("into") and d.get("gold_total", 0) >= 2000:
+            out["lendario"].add(int(item_id))
+    return out
+
+
+def stats_do_item(db: PatchDB, item_id: int, patch: str) -> dict[str, float]:
+    """Os atributos do item no patch (armadura, resistencia magica...), do DataDragon."""
+    import json
+    import sqlite3
+
+    with sqlite3.connect(db.path) as con:
+        row = con.execute(
+            "SELECT data FROM entity WHERE kind='item' AND entity_id=? AND locale=?"
+            " ORDER BY (patch = ?) DESC, patch DESC LIMIT 1",
+            (item_id, FALLBACK_LOCALE, patch),
+        ).fetchone()
+    if not row or not row[0]:
+        return {}
+    return {k: float(v) for k, v in json.loads(row[0]).get("stats", {}).items()}
