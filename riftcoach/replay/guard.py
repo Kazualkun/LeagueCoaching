@@ -370,6 +370,28 @@ async def open_guard() -> tuple[httpx.AsyncClient, ReplayGuard]:
     return client, ReplayGuard(client)
 
 
+async def replay_refusal() -> LiveGameRefused | None:
+    """A recusa de agora, ou `None` se ha replay rodando.
+
+    `is_replay_running` responde sim/nao, e o sim/nao joga fora justamente a
+    parte acionavel: "a Replay API esta desligada, ligue assim" e "nao ha
+    replay rodando, de play" pedem coisas DIFERENTES do usuario. Quem so
+    mostra ou esconde um botao continua usando o booleano; quem vai explicar
+    a falha para a pessoa usa esta.
+    """
+    try:
+        client, guard = await open_guard()
+    except LiveGameRefused as e:
+        return e
+    try:
+        await guard.assert_replay_mode()
+        return None
+    except LiveGameRefused as e:
+        return e
+    finally:
+        await client.aclose()
+
+
 async def is_replay_running() -> bool:
     """Ha um replay rodando agora?
 
@@ -377,17 +399,7 @@ async def is_replay_running() -> bool:
     o unico lugar do projeto onde a recusa nao propaga — e ela vira `False`,
     que e o valor conservador.
     """
-    try:
-        client, guard = await open_guard()
-    except LiveGameRefused:
-        return False
-    try:
-        await guard.assert_replay_mode()
-        return True
-    except LiveGameRefused:
-        return False
-    finally:
-        await client.aclose()
+    return (await replay_refusal()) is None
 
 
 # De quanto em quanto tempo `wait_for_replay` bate na porta. O jogo leva

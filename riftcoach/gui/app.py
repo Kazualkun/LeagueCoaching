@@ -30,7 +30,7 @@ from typing import Any, cast
 from urllib.parse import urlencode
 
 from riftcoach.config import PLATFORM_TO_ROUTING, load_prefs, save_pref, settings
-from riftcoach.core.errors import RiftCoachError
+from riftcoach.core.errors import LiveGameRefused, RiftCoachError
 from riftcoach.gui.theme import (
     ACENTO,
     ALERTA,
@@ -862,36 +862,55 @@ class App:
 
         self._dizer("aguarde, estamos gerando o overlay...")
 
-        async def conferir() -> bool:
+        async def conferir() -> LiveGameRefused | None:
+            from riftcoach.replay.gamecfg import replay_api_status
+            from riftcoach.replay.guard import replay_refusal
+
+            # A Replay API desligada nao vira ligada por insistir: exige
+            # editar o game.cfg e reabrir o jogo. Sondar 90s antes de contar
+            # isso e 90s esperando por uma resposta que ja temos aqui.
+            habilitada, explicacao = replay_api_status()
+            if habilitada is False:
+                return LiveGameRefused("A Replay API do League está desligada.", hint=explicacao)
+
             # O client pode levar alguns segundos entre abrir a janela do
             # replay e publicar /replay/playback. Uma unica sonda transforma
             # esse estado normal de carregamento em um falso "nao encontrei".
-            from riftcoach.replay.guard import is_replay_running
-
+            recusa: LiveGameRefused | None = None
             for tentativa in range(45):
-                if await is_replay_running():
-                    return True
+                recusa = await replay_refusal()
+                if recusa is None:
+                    return None
                 if tentativa < 44:
                     await asyncio.sleep(2.0)
-            return False
+            return recusa
 
         def pronto(r: Resultado) -> None:
-            if not r.dados:
+            if not r.ok:
+                self._aviso(self.corpo, r.erro, r.dica or "Tente de novo.")
+                self._dizer("não consegui checar o replay", ERRO)
+                return
+            if (recusa := r.dados) is not None:
                 from riftcoach.replay.gamecfg import replay_patch_mismatch
 
                 # Replay de patch anterior NAO abre, e mandar "baixe e de play"
                 # nesse caso manda a pessoa tentar uma coisa impossivel.
                 facts = getattr(self._preparado, "facts", None)
                 problema = replay_patch_mismatch(facts.patch) if facts is not None else None
-                self._aviso(
-                    self.corpo,
-                    "Não encontrei nenhum replay rodando.",
+                # A recusa do guard ja diz o que fazer ("ligue a Replay API",
+                # "de play"). Trocar isso por um texto fixo de "nao encontrei"
+                # manda a pessoa repetir o que ela ja fez.
+                detalhe = (
                     problema
+                    or recusa.hint
                     or "Abra o League, vá em Partidas, baixe o replay da partida e "
-                    "dê play. Depois clique em Abrir overlay de novo. "
-                    "Importante: o jogo precisa estar em modo 'Sem bordas' — "
-                    "em tela cheia exclusiva nada aparece por cima.",
+                    "dê play. Depois clique em Abrir overlay de novo."
                 )
+                nota = (
+                    "O jogo também precisa estar em modo 'Sem bordas' — em "
+                    "tela cheia exclusiva nada aparece por cima."
+                )
+                self._aviso(self.corpo, recusa.message, f"{detalhe}\n\n{nota}")
                 self._dizer("replay não encontrado", ALERTA)
                 return
 

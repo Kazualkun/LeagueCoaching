@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from riftcoach.core.errors import LiveGameRefused
 from riftcoach.gui.app import App, Resultado
 
 
@@ -206,12 +207,34 @@ def test_sem_replay_aberto_a_janela_ensina_em_vez_de_so_falhar(app: App) -> None
     app.estado.resumo = "x"
     app.tela_pronto()
     app._abrir_overlay()
-    # A conferencia foi pedida; simulamos a resposta negativa.
+    # A conferencia foi pedida; simulamos a recusa sem motivo acionavel.
     pronto = app._ultimo_retorno  # type: ignore[attr-defined]
-    pronto(Resultado(ok=True, dados=False))
+    pronto(Resultado(ok=True, dados=LiveGameRefused("Não encontrei nenhum replay rodando.")))
     textos = _todos_os_textos(app)
     assert any("Sem bordas" in t for t in textos)
     assert any("Partidas" in t for t in textos)
+
+
+def test_motivo_da_recusa_chega_ate_a_janela(app: App) -> None:
+    """A Replay API desligada e 'sem replay rodando' pedem coisas diferentes:
+    a primeira so sai editando o game.cfg. A janela descartava o diagnostico
+    do guard e mandava dar play de novo — conselho que nunca ia funcionar."""
+    app.estado.resumo = "x"
+    app.tela_pronto()
+    app._abrir_overlay()
+    pronto = app._ultimo_retorno  # type: ignore[attr-defined]
+    pronto(
+        Resultado(
+            ok=True,
+            dados=LiveGameRefused(
+                "A Replay API do League está desligada.",
+                hint="Adicione EnableReplayApi=1 na secao [General] do game.cfg.",
+            ),
+        )
+    )
+    textos = _todos_os_textos(app)
+    assert any("Replay API" in t for t in textos)
+    assert any("EnableReplayApi=1" in t for t in textos)
 
 
 def _todos_os_textos(a: App) -> list[str]:
